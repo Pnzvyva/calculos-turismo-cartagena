@@ -1,67 +1,138 @@
 import streamlit as st
 import pandas as pd
+from scipy.stats import shapiro
+import backend
 
-# Título
+# Título principal
 st.title("Análisis Económico de Eventos de Turismo Religioso")
 
 # Subida de archivos
 st.sidebar.header("Subir Archivos")
-efecto_directo_file = st.sidebar.file_uploader("Efecto Económico Directo (.xlsx)", type=["xlsx"])
-multiplicadores_file = st.sidebar.file_uploader("Multiplicadores (.xlsx)", type=["xlsx"])
-encuesta_file = st.sidebar.file_uploader("Encuesta (.xlsx)", type=["xlsx"])
-aforo_file = st.sidebar.file_uploader("Potencial de Aforo (.xlsx)", type=["xlsx"])
+eed_file = st.sidebar.file_uploader("Efecto Económico Directo (EED.xlsx)", type=["xlsx"])
+multi_file = st.sidebar.file_uploader("Multiplicadores (Multiplicador.xlsx)", type=["xlsx"])
+encuesta_file = st.sidebar.file_uploader("Encuesta (S123...EXCEL.xlsx)", type=["xlsx"])
+aforo_file = st.sidebar.file_uploader("Potencial de Aforo (Potencial de aforo.xlsx)", type=["xlsx"])
 
-# Si todos los archivos se suben
-if efecto_directo_file and multiplicadores_file and encuesta_file and aforo_file:
-    # Cargar datos
-    df_directo = pd.read_excel(efecto_directo_file)
-    df_multi = pd.read_excel(multiplicadores_file)
-    df_encuesta = pd.read_excel(encuesta_file)
-    df_aforo = pd.read_excel(aforo_file)
+# Criterio de cálculo
+criterio = st.sidebar.selectbox("Criterio de cálculo para gastos:", ["Mediana", "Promedio"])
 
-    # Mostrar una muestra de datos
-    st.subheader("Vista previa de Efecto Económico Directo")
-    st.write(df_directo.head())
+# Si todos los archivos están subidos
+if eed_file and multi_file and encuesta_file and aforo_file:
 
-    # Selección de evento
-    eventos = df_aforo['Evento'].unique()
+    # Leer archivos
+    df_eed = pd.read_excel(eed_file, engine="openpyxl")
+    df_multi = pd.read_excel(multi_file, engine="openpyxl")
+    df_encuesta = pd.read_excel(encuesta_file, engine="openpyxl")
+    df_aforo = pd.read_excel(aforo_file, engine="openpyxl")
+
+    # Mostrar evento a seleccionar
+    eventos = df_aforo["Evento"].unique()
     evento_seleccionado = st.selectbox("Selecciona el Evento:", eventos)
 
-    # Filtrar datos de aforo según evento
-    aforo_evento = df_aforo[df_aforo['Evento'] == evento_seleccionado]
+    # Filtrar aforo del evento
+    aforo_evento = df_aforo[df_aforo["Evento"] == evento_seleccionado]
+    potencial_aforo = aforo_evento["Potencial de aforo"].sum()
 
-    # Ejemplo de cálculo (ajusta fórmulas según tus datos reales)
-    df_resultados = df_directo.copy()
-    df_resultados = df_resultados.merge(df_multi, on=['Codigo','Nombre'])
+    st.write(f"**Potencial de aforo del evento seleccionado:** {potencial_aforo:,.0f}")
 
-    # Efecto Indirecto = Ventas * Multiplicador
-    df_resultados['Efecto_Indirecto'] = df_resultados['Ventas'] * df_resultados['Multiplicador']
+    # Efecto Económico Directo
+    df_directo = df_eed.copy()
+    suma_efecto_directo = df_directo["V_EED"].sum()
+    st.write(f"**Suma total de efecto económico directo:** ${suma_efecto_directo:,.0f}")
 
-    # Efecto Inducido Neto = Ventas * % aforo (ejemplo)
-    porc_aforo = aforo_evento['Porcentaje'].values[0] / 100
-    df_resultados['Efecto_Inducido'] = df_resultados['Ventas'] * porc_aforo
+    # 🔹 ESTIMACIÓN DEL PNL con limpieza y detalle
 
-    # Efecto Total
-    df_resultados['Efecto_Total'] = df_resultados['Ventas'] + df_resultados['Efecto_Indirecto'] + df_resultados['Efecto_Inducido']
+    st.subheader("Cálculo Detallado del Factor de Población (PNL)")
 
-    # Conversión a millones de pesos
-    for col in ['Ventas', 'Efecto_Indirecto', 'Efecto_Inducido', 'Efecto_Total']:
-        df_resultados[col] = df_resultados[col] / 1e6
+    # 🔹 1. Filtrar encuestados con respuesta "Sí" o "No"
+    df_encuesta_responde = df_encuesta[
+        df_encuesta["¿Reside en la ciudad de Cartagena de Indias?"]
+        .str.strip()
+        .str.lower()
+        .isin(["sí", "si", "no"])
+    ]
 
-    # Cálculo de porcentajes
-    totales = df_resultados[['Ventas','Efecto_Indirecto','Efecto_Inducido','Efecto_Total']].sum()
-    df_resultados['% Directo'] = (df_resultados['Ventas'] / totales['Ventas']) * 100
-    df_resultados['% Indirecto'] = (df_resultados['Efecto_Indirecto'] / totales['Efecto_Indirecto']) * 100
-    df_resultados['% Inducido'] = (df_resultados['Efecto_Inducido'] / totales['Efecto_Inducido']) * 100
-    df_resultados['% Total'] = (df_resultados['Efecto_Total'] / totales['Efecto_Total']) * 100
+    total_encuestados = df_encuesta_responde.shape[0]
+    st.write(f"Total de encuestados que respondieron residencia (sí/no): **{total_encuestados}**")
 
-    # Mostrar tabla de resultados
-    st.subheader(f"Resultados del Evento: {evento_seleccionado}")
-    st.dataframe(df_resultados)
+    # 🔹 2. Potencial de aforo = suma de todos los eventos
+    potencial_aforo = df_aforo["Potencial de aforo"].sum()
+    st.write(f"Potencial de aforo (suma de todos los eventos): **{potencial_aforo:,.0f}**")
 
-    # Descargar CSV
-    csv = df_resultados.to_csv(index=False).encode()
-    st.download_button("Descargar CSV", data=csv, file_name="resultados_evento.csv")
+    # 🔹 3. Filtrar NO residentes
+    no_reside = df_encuesta_responde[
+        df_encuesta_responde["¿Reside en la ciudad de Cartagena de Indias?"]
+        .str.strip()
+        .str.lower()
+        .eq("no")
+    ]
+
+    total_no_reside = no_reside.shape[0]
+    st.write(f"Total de encuestados NO residentes: **{total_no_reside}**")
+
+    # 🔹 4. Homogeneizar columna de motivo
+    no_reside["Motivo_normalizado"] = (
+        no_reside["¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"]
+        .fillna("sin respuesta")
+        .str.strip()
+        .str.lower()
+    )
+
+    # 🔹 5. Contar categorías relevantes
+    motivo_religioso = "venir a los eventos religiosos"
+    motivo_ocio = "vacaciones/ocio"
+
+    total_religioso = no_reside[
+        no_reside["Motivo_normalizado"] == motivo_religioso
+    ].shape[0]
+    total_ocio = no_reside[
+        no_reside["Motivo_normalizado"] == motivo_ocio
+    ].shape[0]
+
+    total_otros_o_sin_respuesta = total_no_reside - total_religioso - total_ocio
+
+    # 🔹 6. Mostrar conteos intermedios
+    st.write("**Conteo de motivos de viaje entre NO residentes:**")
+    st.write(f"- Venir a los eventos religiosos: **{total_religioso}**")
+    st.write(f"- Vacaciones/ocio: **{total_ocio}**")
+    st.write(f"- Otros o sin respuesta: **{total_otros_o_sin_respuesta}**")
+    st.write(f"- Total NO residentes: **{total_no_reside}**")
+
+    # Validación
+    if total_no_reside == 0 or total_encuestados == 0:
+        st.error("No hay suficientes datos de encuesta para calcular el PNL.")
+        st.stop()
+
+
+    # 🔹 7. Cálculo paso a paso
+    proporcion_turismo = total_no_reside / total_encuestados
+    ponderador = (
+        1 * (total_religioso / total_no_reside) +
+        0.5 * ((total_ocio + total_otros_o_sin_respuesta) / total_no_reside)
+    )
+
+    st.write(f"Proporción de no residentes sobre total encuestados: **{proporcion_turismo:.4f}**")
+    st.write(f"Ponderador de motivos (religioso/ocio): **{ponderador:.4f}**")
+
+    # 🔹 8. Cálculo final del PNL
+    PNL = (potencial_aforo * proporcion_turismo) * ponderador
+    st.success(f"**Población estimada (PNL): {PNL:,.2f}**")
+
+
+    # Merge con multiplicadores
+    df_merge = df_directo.merge(
+        df_multi,
+        how="inner",
+        on="C_Sector"
+    )
+    df_merge["Efecto_Indirecto"] = df_merge["V_EED"] * df_merge["Multiplicador intraregional para Bolívar"]
+    df_merge["Efecto_Inducido_Neto_Directo"] = df_merge["Efecto_Indirecto"] - df_merge["V_EED"]
+
+    st.subheader("Efectos Directo e Indirecto por Sector")
+    st.dataframe(df_merge)
+
+    # Aquí seguirían los cálculos de estancia y gastos, que puedes dejar igual por ahora
 
 else:
-    st.warning("Por favor sube los 4 archivos requeridos.")
+    st.warning("Por favor sube los 4 archivos para iniciar.")
+
