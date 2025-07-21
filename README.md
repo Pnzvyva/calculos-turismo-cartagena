@@ -21,6 +21,7 @@ turismo-religioso-analisis/
 │   ├── Encuesta.xlsx
 │   └── Potencial_de_aforo.xlsx
 └── README.md             ← Este archivo
+```
 
 🧠 ¿Qué hace la App?
 🔹 Paso 1: Carga de Archivos
