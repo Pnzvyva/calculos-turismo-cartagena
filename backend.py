@@ -96,61 +96,82 @@ def calcular_pnl(df_encuesta, df_aforo):
         "no_reside": no_reside
     }
 
-def calcular_efecto_indirecto(df_encuesta_no_reside, pnl, criterio="Mediana"):
+def evaluar_distribuciones(df, columnas, criterio="auto"):
     """
-    Calcula el efecto económico indirecto con base en la normalidad de las variables.
-
+    Evalúa si las columnas seleccionadas tienen distribución normal.
+    
     Parámetros:
-        df_encuesta_no_reside: DataFrame con solo no residentes
-        pnl: Población estimada
-        criterio: "Mediana" o "Promedio"
-
+        df: DataFrame
+        columnas: Lista de nombres de columnas numéricas
+        criterio: 'auto', 'Mediana' o 'Promedio'
+    
     Retorna:
-        efecto_indirecto_estimado: valor numérico
-        valores_usados: diccionario con estadísticos usados para cada variable
+        dict con estadísticas (p-value, media, mediana, sugerencia)
     """
-
-    df = df_encuesta_no_reside.copy()
-    columnas_dict = extraer_columnas_validas(df)
-
-    datos_limpios = {}
-    normalidades = {}
-    valores_usados = {}
-
-    for alias, col in columnas_dict.items():
-        if col is None:
-            valores_usados[alias] = np.nan
+    resultados = {}
+    for col in columnas:
+        datos = pd.to_numeric(df[col], errors='coerce').dropna()
+        if len(datos) < 3:
+            resultados[col] = {
+                "N": len(datos),
+                "p_value": np.nan,
+                "media": np.nan,
+                "mediana": np.nan,
+                "sugerencia": "Insuficiente"
+            }
             continue
-        df[alias] = pd.to_numeric(df[col], errors="coerce")
-        df_valid = df[alias].dropna()
-        if len(df_valid) > 3:
-            _, p_val = shapiro(df_valid)
-            normalidades[alias] = p_val > 0.05
-            if criterio == "Promedio" and p_val > 0.05:
-                valores_usados[alias] = df_valid.mean()
-            else:
-                valores_usados[alias] = df_valid.median()
-        else:
-            valores_usados[alias] = np.nan
 
-    efecto_indirecto_estimado = pnl * valores_usados["gasto_evento"] * valores_usados["dias_estadia"]
+        p_valor = shapiro(datos)[1]
+        sugerencia = (
+            "Promedio" if (criterio == "auto" and p_valor > 0.05) else "Mediana"
+        ) if criterio == "auto" else criterio
 
-    return efecto_indirecto_estimado, valores_usados
+        resultados[col] = {
+            "N": len(datos),
+            "p_value": p_valor,
+            "media": datos.mean(),
+            "mediana": datos.median(),
+            "sugerencia": sugerencia
+        }
 
-def calcular_efecto_inducido(df_merge, efecto_indirecto_estimado):
-    """
-    Calcula el efecto inducido neto por sector.
+    return resultados
 
-    Parámetros:
-        df_merge: DataFrame con columnas 'C_Sector', 'Sector_EED', 'Multiplicador intraregional para Bolívar'
-        efecto_indirecto_estimado: valor numérico del efecto indirecto común
-    Retorna:
-        DataFrame con columnas necesarias para mostrar en la interfaz.
-    """
-    df = df_merge.copy()
-    df["Efecto_Economico_Directo"] = df["V_EED"]
-    df["Efecto_Economico_Indirecto"] = efecto_indirecto_estimado
-    df["Efecto_Inducido_Neto"] = (df["Efecto_Economico_Indirecto"] * df["Multiplicador intraregional para Bolívar"]) - df["Efecto_Economico_Indirecto"]
+def calcular_efecto_economico_indirecto(df_no_reside, pnl, multiplicador=1.0):
+    columnas_dict = extraer_columnas_validas(df_no_reside)
 
-    columnas = ["C_Sector", "Sector_EED", "Efecto_Economico_Directo", "Efecto_Economico_Indirecto", "Efecto_Inducido_Neto"]
-    return df[columnas]
+    # Variables necesarias
+    columnas_usar = [
+        columnas_dict.get("gasto_evento"),
+        columnas_dict.get("gasto_alojamiento"),
+        columnas_dict.get("gasto_alimentacion"),
+        columnas_dict.get("gasto_transporte"),
+        columnas_dict.get("dias_estadia")
+    ]
+    columnas_usar = [col for col in columnas_usar if col is not None]
+
+    stats = evaluar_distribuciones(df_no_reside, columnas_usar, criterio="auto")
+
+    # Obtener valores sugeridos
+    get_valor = lambda col: stats[col]["media"] if stats[col]["sugerencia"] == "Promedio" else stats[col]["mediana"]
+
+    gasto_evento = get_valor(columnas_dict["gasto_evento"])
+    gasto_alojamiento = get_valor(columnas_dict["gasto_alojamiento"])
+    gasto_alimentacion = get_valor(columnas_dict["gasto_alimentacion"])
+    gasto_transporte = get_valor(columnas_dict["gasto_transporte"])
+    dias_estadia = get_valor(columnas_dict["dias_estadia"])
+
+    gasto_diario_total = gasto_alojamiento + gasto_alimentacion + gasto_transporte
+    gasto_total_por_persona = gasto_evento + (gasto_diario_total * dias_estadia)
+    efecto_indirecto = pnl * gasto_total_por_persona * multiplicador
+
+    resultado = {
+        "Gasto en eventos": gasto_evento,
+        "Gasto diario total": gasto_diario_total,
+        "Días de estadía": dias_estadia,
+        "Gasto total por persona": gasto_total_por_persona,
+        "PNL": pnl,
+        "Multiplicador": multiplicador,
+        "Efecto Económico Indirecto": efecto_indirecto
+    }
+
+    return resultado, stats

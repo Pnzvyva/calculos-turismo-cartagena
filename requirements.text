@@ -1,3 +1,1 @@
-pip install pandas streamlit scipy
-
-usar engine openpyxl 
+pip install pandas streamlit scipy numpy
