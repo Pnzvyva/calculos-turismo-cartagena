@@ -3,7 +3,6 @@
 ![Streamlit](https://img.shields.io/badge/Streamlit-App-red?logo=streamlit)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)
 ![Estado](https://img.shields.io/badge/Estado-En%20Desarrollo-yellow)
-![Licencia](https://img.shields.io/badge/Licencia-MIT-green)
 
 Este proyecto analiza el impacto económico de eventos de turismo religioso en Cartagena utilizando una aplicación desarrollada en **Streamlit**. Estima el número de visitantes no residentes (PNL) y evalúa los **efectos directos, indirectos e inducidos** del turismo sobre los sectores económicos locales.
 
@@ -21,6 +20,7 @@ turismo-religioso-analisis/
 │   ├── Encuesta.xlsx
 │   └── Potencial_de_aforo.xlsx
 └── README.md             ← Este archivo
+```
 
 🧠 ¿Qué hace la App?
 🔹 Paso 1: Carga de Archivos
