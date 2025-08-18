@@ -3,6 +3,7 @@ import streamlit as st
 from scipy.stats import shapiro
 import numpy as np
 from difflib import get_close_matches
+import unicodedata
 
 def extraer_columnas_validas(df_encuesta):
     """
@@ -136,42 +137,74 @@ def evaluar_distribuciones(df, columnas, criterio="auto"):
 
     return resultados
 
-def calcular_efecto_economico_indirecto(df_no_reside, pnl, multiplicador=1.0):
-    columnas_dict = extraer_columnas_validas(df_no_reside)
+def calcular_efecto_economico_indirecto(
+    stats, pnl, multiplicador, col_aloj, col_alim, col_trans, col_dias
+):
+    """
+    Usa los 'stats' de evaluar_distribuciones y las columnas elegidas en la UI.
+    Para cada rubro r ∈ {alojamiento, alimentación, transporte}:
+        Indirecto_r = PNL * (valor_sugerido_r) * (dias_sugerido)
+        InducidoNeto_r = Indirecto_r * (multiplicador - 1)
 
-    # Variables necesarias
-    columnas_usar = [
-        columnas_dict.get("gasto_evento"),
-        columnas_dict.get("gasto_alojamiento"),
-        columnas_dict.get("gasto_alimentacion"),
-        columnas_dict.get("gasto_transporte"),
-        columnas_dict.get("dias_estadia")
+    Total = suma de rubros.
+    Retorna:
+      - resultado (resumen total + trazabilidad)
+      - desglose (lista por rubro y total con valores numéricos)
+    """
+    def _num(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return float("nan")
+
+    def _valor(col):
+        sug = stats[col]["sugerencia"]
+        return _num(stats[col]["media"] if sug == "Promedio" else stats[col]["mediana"])
+
+    # Valores sugeridos desde stats
+    v_aloj  = _valor(col_aloj)
+    v_alim  = _valor(col_alim)
+    v_trans = _valor(col_trans)
+    dias    = _valor(col_dias)
+
+    # Pueden existir NaN: trátalos como 0 para el cálculo por rubro
+    v_aloj0, v_alim0, v_trans0 = (0.0 if pd.isna(v_aloj)  else v_aloj,
+                                  0.0 if pd.isna(v_alim)  else v_alim,
+                                  0.0 if pd.isna(v_trans) else v_trans)
+    dias0 = 0.0 if pd.isna(dias) else dias
+
+    m = float(multiplicador)
+    pnl_f = float(pnl)
+
+    # Indirectos por rubro
+    ind_aloj  = pnl_f * v_aloj0  * dias0
+    ind_alim  = pnl_f * v_alim0  * dias0
+    ind_trans = pnl_f * v_trans0 * dias0
+
+    # Totales
+    indirecto_total = ind_aloj + ind_alim + ind_trans
+
+    # Inducidos netos por rubro y total
+    inc_aloj  = ind_aloj  * (m - 1.0)
+    inc_alim  = ind_alim  * (m - 1.0)
+    inc_trans = ind_trans * (m - 1.0)
+    inducido_neto_total = indirecto_total * (m - 1.0)
+
+    # Desglose listo para DataFrame en la UI
+    desglose = [
+        {"Rubro": "Alojamiento",  "Gasto diario usado": v_aloj0,  "Indirecto": ind_aloj,  "Inducido neto": inc_aloj},
+        {"Rubro": "Alimentación", "Gasto diario usado": v_alim0,  "Indirecto": ind_alim,  "Inducido neto": inc_alim},
+        {"Rubro": "Transporte",   "Gasto diario usado": v_trans0, "Indirecto": ind_trans, "Inducido neto": inc_trans},
+        {"Rubro": "Total",        "Gasto diario usado": v_aloj0 + v_alim0 + v_trans0,
+                                   "Indirecto": indirecto_total, "Inducido neto": inducido_neto_total},
     ]
-    columnas_usar = [col for col in columnas_usar if col is not None]
-
-    stats = evaluar_distribuciones(df_no_reside, columnas_usar, criterio="auto")
-
-    # Obtener valores sugeridos
-    get_valor = lambda col: stats[col]["media"] if stats[col]["sugerencia"] == "Promedio" else stats[col]["mediana"]
-
-    gasto_evento = get_valor(columnas_dict["gasto_evento"])
-    gasto_alojamiento = get_valor(columnas_dict["gasto_alojamiento"])
-    gasto_alimentacion = get_valor(columnas_dict["gasto_alimentacion"])
-    gasto_transporte = get_valor(columnas_dict["gasto_transporte"])
-    dias_estadia = get_valor(columnas_dict["dias_estadia"])
-
-    gasto_diario_total = gasto_alojamiento + gasto_alimentacion + gasto_transporte
-    gasto_total_por_persona = gasto_evento + (gasto_diario_total * dias_estadia)
-    efecto_indirecto = pnl * gasto_total_por_persona * multiplicador
 
     resultado = {
-        "Gasto en eventos": gasto_evento,
-        "Gasto diario total": gasto_diario_total,
-        "Días de estadía": dias_estadia,
-        "Gasto total por persona": gasto_total_por_persona,
-        "PNL": pnl,
-        "Multiplicador": multiplicador,
-        "Efecto Económico Indirecto": efecto_indirecto
+        "PNL": pnl_f,
+        "Días de estadía (valor usado)": dias0,
+        "Multiplicador": m,
+        "Efecto Indirecto Total": indirecto_total,
+        "Efecto Inducido Neto Total": inducido_neto_total
     }
 
-    return resultado, stats
+    return resultado, desglose

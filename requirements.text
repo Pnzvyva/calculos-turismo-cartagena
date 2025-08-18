@@ -1,1 +1,1 @@
-pip install pandas streamlit scipy numpy
+pandas streamlit scipy numpy openpyxl
