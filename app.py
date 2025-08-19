@@ -119,7 +119,7 @@ if encuesta_file and aforo_file and eed_file:
             }))
         
         #Calculo de efecto economico indirecto
-        st.markdown("### <i class='fas fa-chart-line'></i> Efecto Económico Indirecto", unsafe_allow_html=True)
+        st.markdown("### <i class='fas fa-chart-line'></i> Efectos Económicos ", unsafe_allow_html=True)
 
         # Usar directamente los stats ya calculados
         if "resultados_stats" not in locals():
