@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io
 from backend import (
     calcular_pnl,
     extraer_columnas_validas,
@@ -30,14 +31,55 @@ st.sidebar.markdown("### <i class='fas fa-folder-open'></i> Carga los 4 archivos
 encuesta_file = st.sidebar.file_uploader(" Encuesta ", type=["xlsx", "csv"])
 aforo_file = st.sidebar.file_uploader(" Potencial de Aforo ", type=["xlsx", "csv"])
 eed_file = st.sidebar.file_uploader(" EED ", type=["xlsx", "csv"])
-multi_file = st.sidebar.file_uploader(" Multiplicadores ", type=["xlsx", "csv"])
 
-if encuesta_file and aforo_file and eed_file and multi_file:
+# --- Descarga del archivo de multiplicadores (local) ---
+st.sidebar.markdown("### Archivo de multiplicadores")
+st.sidebar.caption("Descarga el archivo de multiplicadores para editarlo y seleccionar sectores a conveniencia.")
+
+try:
+    with open("data/multiplicadores.xlsx", "rb") as f:
+        bytes_xlsx = f.read()
+
+    # Descargar el Excel original
+    st.sidebar.download_button(
+        label="Descargar multiplicadores",
+        data=bytes_xlsx,
+        file_name="multiplicadores.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    # Opción adicional: exportar como CSV
+    df_multi_dl = pd.read_excel(io.BytesIO(bytes_xlsx))
+    csv_norm = df_multi_dl.to_csv(index=False).encode("utf-8")
+    st.sidebar.download_button(
+        label="Descargar como CSV",
+        data=csv_norm,
+        file_name="multiplicadores.csv",
+        mime="text/csv"
+    )
+
+except FileNotFoundError:
+    st.sidebar.warning("No se encontró 'data/multiplicadores.xlsx'. Verifica la ruta o usa la plantilla.")
+    # Plantilla por si no existe el archivo
+    plantilla = pd.DataFrame({
+        "C_Sector": pd.Series(dtype="Int64"),
+        "Sectores": pd.Series(dtype="string"),
+        "Multiplicador intraregional para Bolívar": pd.Series(dtype="float")
+    })
+    csv_tpl = plantilla.to_csv(index=False).encode("utf-8")
+    st.sidebar.download_button(
+        label="Descargar plantilla (CSV)",
+        data=csv_tpl,
+        file_name="Multiplicadores_plantilla.csv",
+        mime="text/csv"
+    )
+
+if encuesta_file and aforo_file and eed_file:
     try:
         df_encuesta = pd.read_excel(encuesta_file) if encuesta_file.name.endswith(".xlsx") else pd.read_csv(encuesta_file)
         df_aforo = pd.read_excel(aforo_file) if aforo_file.name.endswith(".xlsx") else pd.read_csv(aforo_file)
         df_eed = pd.read_excel(eed_file) if eed_file.name.endswith(".xlsx") else pd.read_csv(eed_file)
-        df_multi = pd.read_excel(multi_file) if multi_file.name.endswith(".xlsx") else pd.read_csv(multi_file)
+
 
         # Cálculo del PNL
         st.markdown("### <i class='fas fa-users'></i> Potencial de No Locales (PNL)", unsafe_allow_html=True)
@@ -76,92 +118,92 @@ if encuesta_file and aforo_file and eed_file and multi_file:
                 "mediana": "{:,.2f}"
             }))
         
-#Calculo de efecto economico indirecto
+        #Calculo de efecto economico indirecto
         st.markdown("### <i class='fas fa-chart-line'></i> Efecto Económico Indirecto", unsafe_allow_html=True)
 
-        # Verificar columnas correctas en df_multi (selección por NOMBRE de sector)
-        if not {"Sectores", "Multiplicador intraregional para Bolívar"}.issubset(df_multi.columns):
-            st.error("El archivo de multiplicadores debe incluir las columnas 'Sectores' y 'Multiplicador intraregional para Bolívar'.")
+        # Usar directamente los stats ya calculados
+        if "resultados_stats" not in locals():
+            st.warning("Primero ejecuta la 'Evaluación de distribución' y selecciona las columnas.")
         else:
-            # Selección de sector por nombre
-            opciones_sectores = sorted(df_multi["Sectores"].dropna().astype(str).unique())
-            sector_nombre = st.selectbox(
-                "Selecciona el sector para aplicar el multiplicador:",
-                options=opciones_sectores
+            opciones_cols = list(resultados_stats.keys())
+
+            c1, c2 = st.columns(2)
+            col_aloj  = c1.selectbox("Columna: gasto diario en alojamiento", opciones_cols)
+            col_trans = c2.selectbox("Columna: gasto diario en transporte",  opciones_cols)
+            col_alim  = c1.selectbox("Columna: gasto diario en alimentación", opciones_cols)
+            col_dias  = c2.selectbox("Columna: días de estadía",             opciones_cols)
+
+            # Multiplicadores: general y por rubro (manuales)
+            c3, c4 = st.columns(2)
+            m_general = c3.number_input(
+                "Multiplicador general",
+                min_value=0.0, value=1.0, step=0.01, format="%.4f"
             )
-            multiplicador_seleccionado = pd.to_numeric(
-                df_multi.loc[
-                    df_multi["Sectores"].astype(str).str.strip() == sector_nombre,
-                    "Multiplicador intraregional para Bolívar"
-                ].iloc[0],
-                errors="coerce"
+            st.caption("Ajusta los multiplicadores por rubro; por defecto toman el valor del general.")
+
+            c5, c6, c7 = st.columns(3)
+            m_aloj  = c5.number_input("Multiplicador alojamiento",  min_value=0.0, value=m_general, step=0.01, format="%.4f")
+            m_alim  = c6.number_input("Multiplicador alimentación", min_value=0.0, value=m_general, step=0.01, format="%.4f")
+            m_trans = c7.number_input("Multiplicador transporte",   min_value=0.0, value=m_general, step=0.01, format="%.4f")
+
+            # Cálculo con multiplicadores por rubro
+            resultado_indirecto, desglose = calcular_efecto_economico_indirecto(
+                stats=resultados_stats,
+                pnl=resultado_pnl["PNL"],
+                multiplicador=m_general,  # general
+                multiplicadores={
+                    "alojamiento": m_aloj,
+                    "alimentacion": m_alim,
+                    "transporte": m_trans
+                },
+                col_aloj=col_aloj,
+                col_alim=col_alim,
+                col_trans=col_trans,
+                col_dias=col_dias
             )
 
-            if pd.isna(multiplicador_seleccionado):
-                st.error("El multiplicador seleccionado no es numérico. Revisa el archivo de multiplicadores.")
-            else:
-                # --- Usar los stats ya calculados arriba ---
-                if "resultados_stats" not in locals():
-                    st.warning("Primero ejecuta la 'Evaluación de distribución' y selecciona las columnas.")
-                else:
-                    opciones_cols = list(resultados_stats.keys())
+            st.markdown(
+                f"<i class='fas fa-industry'></i> Multiplicadores → "
+                f"General: <strong>{m_general:.4f}</strong> | "
+                f"Aloj: <strong>{m_aloj:.4f}</strong> | "
+                f"Alim: <strong>{m_alim:.4f}</strong> | "
+                f"Transp: <strong>{m_trans:.4f}</strong>",
+                unsafe_allow_html=True
+            )
 
-                    c1, c2 = st.columns(2)
-                    col_aloj  = c1.selectbox("Columna: gasto diario en alojamiento", opciones_cols)
-                    col_trans = c2.selectbox("Columna: gasto diario en transporte",  opciones_cols)
-                    col_alim  = c1.selectbox("Columna: gasto diario en alimentación", opciones_cols)
-                    col_dias  = c2.selectbox("Columna: días de estadía",             opciones_cols)
+            # ---- Tablas de salida ----
+            def _fmt_num(x):
+                try:
+                    return f"{float(x):,.2f}"
+                except (ValueError, TypeError):
+                    return x
 
-                    resultado_indirecto, desglose = calcular_efecto_economico_indirecto(
-                    stats=resultados_stats,
-                    pnl=resultado_pnl["PNL"],
-                    multiplicador=float(multiplicador_seleccionado),
-                    col_aloj=col_aloj,
-                    col_alim=col_alim,
-                    col_trans=col_trans,
-                    col_dias=col_dias
-                )
+            # Desglose por rubro (Indirecto vs Inducido neto)
+            df_desglose = pd.DataFrame(desglose, columns=["Rubro", "Gasto diario usado", "Indirecto", "Inducido neto"])
+            for c in ["Gasto diario usado", "Indirecto", "Inducido neto"]:
+                df_desglose[c] = df_desglose[c].apply(_fmt_num)
 
-                st.markdown(
-                    f"<i class='fas fa-industry'></i> Sector: <strong>{sector_nombre}</strong> — "
-                    f"Multiplicador: <strong>{float(multiplicador_seleccionado):.4f}</strong>",
-                    unsafe_allow_html=True
-                )
+            st.subheader("Desglose por rubro")
+            st.dataframe(df_desglose, use_container_width=True)
 
-                # ---- Tablas de salida ----
-                def _fmt_num(x):
-                    try:
-                        return f"{float(x):,.2f}"
-                    except (ValueError, TypeError):
-                        return x
+            # Resumen total
+            resumen = {
+                "PNL": resultado_indirecto["PNL"],
+                "Días de estadía (valor usado)": resultado_indirecto["Días de estadía (valor usado)"],
+                "Multiplicador general": resultado_indirecto["Multiplicador general"],
+                "Multiplicador alojamiento": resultado_indirecto["Multiplicador alojamiento"],
+                "Multiplicador alimentación": resultado_indirecto["Multiplicador alimentación"],
+                "Multiplicador transporte": resultado_indirecto["Multiplicador transporte"],
+                "Efecto Indirecto Total": resultado_indirecto["Efecto Indirecto Total"],
+                "Efecto Inducido Neto Total": resultado_indirecto["Efecto Inducido Neto Total"],
+            }
+            df_resumen = pd.DataFrame(resumen, index=["Valor"]).T
+            df_resumen["Valor"] = df_resumen["Valor"].apply(_fmt_num)
 
-                # Desglose por rubro (Indirecto vs Inducido neto)
-                df_desglose = pd.DataFrame(desglose, columns=["Rubro", "Gasto diario usado", "Indirecto", "Inducido neto"])
-                for c in ["Gasto diario usado", "Indirecto", "Inducido neto"]:
-                    df_desglose[c] = df_desglose[c].apply(_fmt_num)
-
-                st.subheader("Desglose por rubro")
-                st.dataframe(df_desglose, use_container_width=True)
-
-                # Resumen total y trazabilidad de métodos
-                resumen = {
-                    "PNL": resultado_indirecto["PNL"],
-                    "Días de estadía (valor usado)": resultado_indirecto["Días de estadía (valor usado)"],
-                    "Multiplicador": resultado_indirecto["Multiplicador"],
-                    "Efecto Indirecto Total": resultado_indirecto["Efecto Indirecto Total"],
-                    "Efecto Inducido Neto Total": resultado_indirecto["Efecto Inducido Neto Total"],
-                    "Método alojamiento": resultado_indirecto["Método alojamiento"],
-                    "Método alimentación": resultado_indirecto["Método alimentación"],
-                    "Método transporte": resultado_indirecto["Método transporte"],
-                    "Método días": resultado_indirecto["Método días"],
-                }
-                df_resumen = pd.DataFrame(resumen, index=["Valor"]).T
-                df_resumen["Valor"] = df_resumen["Valor"].apply(_fmt_num)
-
-                st.subheader("Resumen total")
-                st.dataframe(df_resumen, use_container_width=True)
+            st.subheader("Resumen total")
+            st.dataframe(df_resumen, use_container_width=True)
 
     except Exception as e:
         st.error(f"Ocurrió un error al procesar los datos: {e}")
 else:
-    st.warning("Por favor sube los 4 archivos: Encuesta, Aforo, EED y Multiplicadores.")
+        st.warning("Por favor sube los 3 archivos: Encuesta, Aforo y EED. (El archivo de multiplicadores es opcional y puedes descargar una plantilla en la barra lateral).")

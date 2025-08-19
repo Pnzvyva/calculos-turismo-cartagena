@@ -31,7 +31,7 @@ def extraer_columnas_validas(df_encuesta):
     return mapeo_resultante
 
 def calcular_pnl(df_encuesta, df_aforo):
-    # 🔹 1. Filtrar encuestados con respuesta "Sí" o "No"
+    #  1. Filtrar encuestados con respuesta "Sí" o "No"
     df_encuesta_responde = df_encuesta[
         df_encuesta["¿Reside en la ciudad de Cartagena de Indias?"]
         .str.strip()
@@ -41,10 +41,10 @@ def calcular_pnl(df_encuesta, df_aforo):
 
     total_encuestados = df_encuesta_responde.shape[0]
 
-    # 🔹 2. Potencial de aforo = suma de todos los eventos
+    #  2. Potencial de aforo = suma de todos los eventos
     potencial_aforo = df_aforo["Potencial de aforo"].sum()
 
-    # 🔹 3. Filtrar NO residentes
+    #  3. Filtrar NO residentes
     no_reside = df_encuesta_responde[
         df_encuesta_responde["¿Reside en la ciudad de Cartagena de Indias?"]
         .str.strip()
@@ -54,7 +54,7 @@ def calcular_pnl(df_encuesta, df_aforo):
 
     total_no_reside = no_reside.shape[0]
 
-    # 🔹 4. Homogeneizar columna de motivo
+    #  4. Homogeneizar columna de motivo
     no_reside["Motivo_normalizado"] = (
         no_reside["¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"]
         .fillna("sin respuesta")
@@ -62,7 +62,7 @@ def calcular_pnl(df_encuesta, df_aforo):
         .str.lower()
     )
 
-    # 🔹 5. Contar categorías relevantes
+    #  5. Contar categorías relevantes
     motivo_religioso = "venir a los eventos religiosos"
     motivo_ocio = "vacaciones/ocio"
 
@@ -74,14 +74,14 @@ def calcular_pnl(df_encuesta, df_aforo):
     ].shape[0]
     total_otros_o_sin_respuesta = total_no_reside - total_religioso - total_ocio
 
-    # 🔹 6. Cálculo paso a paso
+    #  6. Cálculo paso a paso
     proporcion_turismo = total_no_reside / total_encuestados
     ponderador = (
         1 * (total_religioso / total_no_reside) +
         0.5 * ((total_ocio + total_otros_o_sin_respuesta) / total_no_reside)
     )
 
-    # 🔹 7. Cálculo final del PNL
+    #  7. Cálculo final del PNL
     PNL = (potencial_aforo * proporcion_turismo) * ponderador
 
     return {
@@ -138,17 +138,18 @@ def evaluar_distribuciones(df, columnas, criterio="auto"):
     return resultados
 
 def calcular_efecto_economico_indirecto(
-    stats, pnl, multiplicador, col_aloj, col_alim, col_trans, col_dias
+    stats, pnl, multiplicador, col_aloj, col_alim, col_trans, col_dias, multiplicadores=None
 ):
     """
-    Usa los 'stats' de evaluar_distribuciones y las columnas elegidas en la UI.
-    Para cada rubro r ∈ {alojamiento, alimentación, transporte}:
-        Indirecto_r = PNL * (valor_sugerido_r) * (dias_sugerido)
-        InducidoNeto_r = Indirecto_r * (multiplicador - 1)
+    Calcula efectos por rubro usando los valores sugeridos de `stats`.
+    Para cada rubro r en {alojamiento, alimentación, transporte}:
+        Indirecto_r       = PNL * (valor_sugerido_r) * (dias_sugerido)
+        InducidoNeto_r    = (Indirecto_r * m_r) - Indirecto_r
+    donde m_r es el multiplicador por rubro si viene en `multiplicadores`,
+    o en su defecto `multiplicador` (general).
 
-    Total = suma de rubros.
     Retorna:
-      - resultado (resumen total + trazabilidad)
+      - resultado (resumen total)
       - desglose (lista por rubro y total con valores numéricos)
     """
     def _num(x):
@@ -167,13 +168,19 @@ def calcular_efecto_economico_indirecto(
     v_trans = _valor(col_trans)
     dias    = _valor(col_dias)
 
-    # Pueden existir NaN: trátalos como 0 para el cálculo por rubro
-    v_aloj0, v_alim0, v_trans0 = (0.0 if pd.isna(v_aloj)  else v_aloj,
-                                  0.0 if pd.isna(v_alim)  else v_alim,
-                                  0.0 if pd.isna(v_trans) else v_trans)
-    dias0 = 0.0 if pd.isna(dias) else dias
+    # Tratar NaN como 0 en gastos y días
+    v_aloj0  = 0.0 if pd.isna(v_aloj)  else v_aloj
+    v_alim0  = 0.0 if pd.isna(v_alim)  else v_alim
+    v_trans0 = 0.0 if pd.isna(v_trans) else v_trans
+    dias0    = 0.0 if pd.isna(dias)    else dias
 
-    m = float(multiplicador)
+    # Multiplicadores
+    m_general = float(multiplicador)
+    multiplicadores = multiplicadores or {}
+    m_aloj  = float(multiplicadores.get("alojamiento",  m_general))
+    m_alim  = float(multiplicadores.get("alimentacion", m_general))
+    m_trans = float(multiplicadores.get("transporte",   m_general))
+
     pnl_f = float(pnl)
 
     # Indirectos por rubro
@@ -184,13 +191,13 @@ def calcular_efecto_economico_indirecto(
     # Totales
     indirecto_total = ind_aloj + ind_alim + ind_trans
 
-    # Inducidos netos por rubro y total
-    inc_aloj  = ind_aloj  * (m - 1.0)
-    inc_alim  = ind_alim  * (m - 1.0)
-    inc_trans = ind_trans * (m - 1.0)
-    inducido_neto_total = indirecto_total * (m - 1.0)
+    # Inducidos netos por rubro (explícito)
+    inc_aloj  = (ind_aloj  * m_aloj)  - ind_aloj
+    inc_alim  = (ind_alim  * m_alim)  - ind_alim
+    inc_trans = (ind_trans * m_trans) - ind_trans
+    inducido_neto_total = inc_aloj + inc_alim + inc_trans  # suma por rubro
 
-    # Desglose listo para DataFrame en la UI
+    # Desglose para la UI
     desglose = [
         {"Rubro": "Alojamiento",  "Gasto diario usado": v_aloj0,  "Indirecto": ind_aloj,  "Inducido neto": inc_aloj},
         {"Rubro": "Alimentación", "Gasto diario usado": v_alim0,  "Indirecto": ind_alim,  "Inducido neto": inc_alim},
@@ -202,7 +209,10 @@ def calcular_efecto_economico_indirecto(
     resultado = {
         "PNL": pnl_f,
         "Días de estadía (valor usado)": dias0,
-        "Multiplicador": m,
+        "Multiplicador general": m_general,
+        "Multiplicador alojamiento": m_aloj,
+        "Multiplicador alimentación": m_alim,
+        "Multiplicador transporte": m_trans,
         "Efecto Indirecto Total": indirecto_total,
         "Efecto Inducido Neto Total": inducido_neto_total
     }
