@@ -187,6 +187,20 @@ if encuesta_file and aforo_file and eed_file:
             st.dataframe(df_desglose, use_container_width=True)
 
             # Resumen total
+            # --- Efecto económico directo total (desde EED) ---
+            if "V_EED" in df_eed.columns:
+                efecto_directo_total = pd.to_numeric(df_eed["V_EED"], errors="coerce").sum()
+            else:
+                st.warning("La columna 'V_EED' no existe en el archivo EED. No se puede calcular el efecto directo total.")
+                efecto_directo_total = float("nan")
+
+            # --- Efecto económico total = Directo + Indirecto + Inducido neto ---
+            efecto_economico_total = (
+                (resultado_indirecto["Efecto Indirecto Total"] or 0.0) +
+                (resultado_indirecto["Efecto Inducido Neto Total"] or 0.0) +
+                (efecto_directo_total if pd.notna(efecto_directo_total) else 0.0)
+            )
+
             resumen = {
                 "PNL": resultado_indirecto["PNL"],
                 "Días de estadía (valor usado)": resultado_indirecto["Días de estadía (valor usado)"],
@@ -194,10 +208,21 @@ if encuesta_file and aforo_file and eed_file:
                 "Multiplicador alojamiento": resultado_indirecto["Multiplicador alojamiento"],
                 "Multiplicador alimentación": resultado_indirecto["Multiplicador alimentación"],
                 "Multiplicador transporte": resultado_indirecto["Multiplicador transporte"],
+                "Efecto Directo Total (EED)": efecto_directo_total,
                 "Efecto Indirecto Total": resultado_indirecto["Efecto Indirecto Total"],
                 "Efecto Inducido Neto Total": resultado_indirecto["Efecto Inducido Neto Total"],
+                "Efecto Económico Total": efecto_economico_total,
             }
+
             df_resumen = pd.DataFrame(resumen, index=["Valor"]).T
+
+            # Formatear sólo numéricos
+            def _fmt_num(x):
+                try:
+                    return f"{float(x):,.2f}"
+                except (ValueError, TypeError):
+                    return x
+
             df_resumen["Valor"] = df_resumen["Valor"].apply(_fmt_num)
 
             st.subheader("Resumen total")
