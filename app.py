@@ -5,7 +5,8 @@ from backend import (
     calcular_pnl,
     extraer_columnas_validas,
     evaluar_distribuciones,
-    calcular_efecto_economico_indirecto
+    calcular_efecto_economico_indirecto,
+    detectar_categorias_motivo
 )
 
 # Configuración inicial de la app
@@ -74,6 +75,7 @@ except FileNotFoundError:
         mime="text/csv"
     )
 
+
 if encuesta_file and aforo_file and eed_file:
     try:
         df_encuesta = pd.read_excel(encuesta_file) if encuesta_file.name.endswith(".xlsx") else pd.read_csv(encuesta_file)
@@ -81,19 +83,63 @@ if encuesta_file and aforo_file and eed_file:
         df_eed = pd.read_excel(eed_file) if eed_file.name.endswith(".xlsx") else pd.read_csv(eed_file)
 
 
-        # Cálculo del PNL
+        # Cálculo del PNL (modo flexible por motivo)
         st.markdown("### <i class='fas fa-users'></i> Potencial de No Locales (PNL)", unsafe_allow_html=True)
-        resultado_pnl = calcular_pnl(df_encuesta, df_aforo)
+
+        # Columnas usadas (puedes parametrizarlas después si lo deseas)
+        col_reside = "¿Reside en la ciudad de Cartagena de Indias?"
+        col_motivo = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"
+
+        # Detectar categorías disponibles entre NO residentes
+        try:
+            conteos_motivos = detectar_categorias_motivo(
+                df_encuesta,
+                columna_reside=col_reside,
+                columna_motivo=col_motivo
+            )
+            categorias_disponibles = conteos_motivos.index.tolist()
+        except Exception as e:
+            st.error(f"Error detectando categorías de motivo: {e}")
+            categorias_disponibles = []
+
+        # UI: selección de motivo principal y pesos
+        if categorias_disponibles:
+            cat_default = "venir a los eventos religiosos" if "venir a los eventos religiosos" in categorias_disponibles else categorias_disponibles[0]
+            categoria_principal = st.selectbox(
+                "Selecciona la categoría de motivo 'principal' para el ponderador",
+                options=categorias_disponibles,
+                index=categorias_disponibles.index(cat_default)
+            )
+        else:
+            st.info("No se encontraron categorías de motivo entre NO residentes. Se usará selección automática en backend.")
+            categoria_principal = None  # backend decide
+
+        c1, c2 = st.columns(2)
+        peso_principal = c1.number_input("Peso categoría principal", min_value=0.0, value=1.0, step=0.1, format="%.2f")
+        peso_otros     = c2.number_input("Peso otras categorías / sin respuesta", min_value=0.0, value=0.5, step=0.1, format="%.2f")
+
+        # Llamada al backend con la nueva firma
+        resultado_pnl = calcular_pnl(
+            df_encuesta=df_encuesta,
+            df_aforo=df_aforo,
+            columna_reside=col_reside,
+            columna_motivo=col_motivo,
+            categoria_principal=categoria_principal,
+            peso_principal=peso_principal,
+            peso_otros=peso_otros
+        )
+
         st.metric("PNL estimado", f"{resultado_pnl['PNL']:,.0f}")
         st.write("Detalles:")
         st.write({
             "Encuestados": resultado_pnl['total_encuestados'],
             "No residentes": resultado_pnl['total_no_reside'],
-            "Religioso": resultado_pnl['total_religioso'],
-            "Ocio": resultado_pnl['total_ocio'],
-            "Otros/Sin respuesta": resultado_pnl['total_otros'],
+            "Motivo principal seleccionado": resultado_pnl['categoria_principal'],
+            "Total motivo principal": resultado_pnl['total_motivo_seleccionado'],
             "Proporción turismo": f"{resultado_pnl['proporcion_turismo']:.2%}",
-            "Ponderador": f"{resultado_pnl['ponderador']:.2f}"
+            "Ponderador": f"{resultado_pnl['ponderador']:.2f}",
+            "Peso categoría principal": f"{resultado_pnl['peso_principal']:.2f}",
+            "Peso otras categorías": f"{resultado_pnl['peso_otros']:.2f}",
         })
 
         # Pruebas de normalidad de encuestas no residentes.

@@ -30,71 +30,159 @@ def extraer_columnas_validas(df_encuesta):
 
     return mapeo_resultante
 
-def calcular_pnl(df_encuesta, df_aforo):
-    #  1. Filtrar encuestados con respuesta "Sí" o "No"
-    df_encuesta_responde = df_encuesta[
-        df_encuesta["¿Reside en la ciudad de Cartagena de Indias?"]
-        .str.strip()
-        .str.lower()
+def detectar_categorias_motivo(
+    df_encuesta: pd.DataFrame,
+    columna_reside: str = "¿Reside en la ciudad de Cartagena de Indias?",
+    columna_motivo: str = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"
+) -> pd.Series:
+    """
+    Devuelve un Series con el conteo de categorías de motivo entre NO residentes.
+    Sirve para poblar el selectbox en la UI.
+    """
+    if columna_reside not in df_encuesta.columns:
+        raise ValueError(f"No se encontró la columna de residencia: '{columna_reside}'")
+
+    if columna_motivo not in df_encuesta.columns:
+        raise ValueError(f"No se encontró la columna de motivo: '{columna_motivo}'")
+
+    # Filtrar respuestas válidas y NO residentes
+    df_responde = df_encuesta[
+        df_encuesta[columna_reside]
+        .astype(str).str.strip().str.lower()
         .isin(["sí", "si", "no"])
     ]
-
-    total_encuestados = df_encuesta_responde.shape[0]
-
-    #  2. Potencial de aforo = suma de todos los eventos
-    potencial_aforo = df_aforo["Potencial de aforo"].sum()
-
-    #  3. Filtrar NO residentes
-    no_reside = df_encuesta_responde[
-        df_encuesta_responde["¿Reside en la ciudad de Cartagena de Indias?"]
-        .str.strip()
-        .str.lower()
+    no_reside = df_responde[
+        df_responde[columna_reside]
+        .astype(str).str.strip().str.lower()
         .eq("no")
     ]
 
-    total_no_reside = no_reside.shape[0]
+    if no_reside.empty:
+        return pd.Series(dtype="int64")
 
-    #  4. Homogeneizar columna de motivo
-    no_reside["Motivo_normalizado"] = (
-        no_reside["¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"]
-        .fillna("sin respuesta")
+    motivos = (
+        no_reside[columna_motivo]
+        .astype(str)
         .str.strip()
+        .replace({"": "sin respuesta"})
         .str.lower()
     )
 
-    #  5. Contar categorías relevantes
-    motivo_religioso = "venir a los eventos religiosos"
-    motivo_ocio = "vacaciones/ocio"
+    return motivos.value_counts(dropna=False)
 
-    total_religioso = no_reside[
-        no_reside["Motivo_normalizado"] == motivo_religioso
-    ].shape[0]
-    total_ocio = no_reside[
-        no_reside["Motivo_normalizado"] == motivo_ocio
-    ].shape[0]
-    total_otros_o_sin_respuesta = total_no_reside - total_religioso - total_ocio
 
-    #  6. Cálculo paso a paso
-    proporcion_turismo = total_no_reside / total_encuestados
-    ponderador = (
-        1 * (total_religioso / total_no_reside) +
-        0.5 * ((total_ocio + total_otros_o_sin_respuesta) / total_no_reside)
+def calcular_pnl(
+    df_encuesta: pd.DataFrame,
+    df_aforo: pd.DataFrame,
+    columna_reside: str = "¿Reside en la ciudad de Cartagena de Indias?",
+    columna_motivo: str = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?",
+    categoria_principal: str | None = None,
+    peso_principal: float = 1.0,
+    peso_otros: float = 0.5
+) -> dict:
+    """
+    Calcula el PNL permitiendo seleccionar qué categoría de motivo es la 'principal'
+    para el ponderador. El resto de categorías toman 'peso_otros'.
+
+    Ponderador = peso_principal * (total_motivo_seleccionado / total_no_reside)
+               + peso_otros     * ((total_no_reside - total_motivo_seleccionado) / total_no_reside)
+    """
+    # 1) Filtrado de respuestas válidas
+    if columna_reside not in df_encuesta.columns:
+        raise ValueError(f"No se encontró la columna de residencia: '{columna_reside}'")
+
+    df_encuesta_responde = df_encuesta[
+        df_encuesta[columna_reside]
+        .astype(str).str.strip().str.lower()
+        .isin(["sí", "si", "no"])
+    ]
+    total_encuestados = df_encuesta_responde.shape[0]
+    if total_encuestados == 0:
+        raise ValueError("No hay encuestados válidos (Sí/No) en la columna de residencia.")
+
+    # 2) Potencial de aforo (suma de todos los eventos)
+    if "Potencial de aforo" not in df_aforo.columns:
+        raise ValueError("El archivo de Aforo debe tener la columna 'Potencial de aforo'.")
+    potencial_aforo = pd.to_numeric(df_aforo["Potencial de aforo"], errors="coerce").fillna(0).sum()
+
+    # 3) NO residentes
+    no_reside = df_encuesta_responde[
+        df_encuesta_responde[columna_reside]
+        .astype(str).str.strip().str.lower()
+        .eq("no")
+    ]
+    total_no_reside = no_reside.shape[0]
+    if total_no_reside == 0:
+        # Sin no-residentes => PNL = 0
+        return {
+            "PNL": 0.0,
+            "total_encuestados": total_encuestados,
+            "potencial_aforo": potencial_aforo,
+            "total_no_reside": 0,
+            "total_motivo_seleccionado": 0,
+            "proporcion_turismo": 0.0,
+            "ponderador": 0.0,
+            "no_reside": no_reside,
+            "categoria_principal": categoria_principal,
+            "peso_principal": peso_principal,
+            "peso_otros": peso_otros
+        }
+
+    # 4) Homogeneizar motivo
+    if columna_motivo not in df_encuesta.columns:
+        raise ValueError(f"No se encontró la columna de motivo: '{columna_motivo}'")
+
+    motivos_norm = (
+        no_reside[columna_motivo]
+        .astype(str)
+        .str.strip()
+        .replace({"": "sin respuesta"})
+        .str.lower()
     )
 
-    #  7. Cálculo final del PNL
+    # 5) Selección de categoría principal
+    # Si no se especifica, intenta usar 'venir a los eventos religiosos' si existe; si no, toma la más frecuente
+    if categoria_principal is None:
+        vc = motivos_norm.value_counts(dropna=False)
+        if "venir a los eventos religiosos" in vc.index:
+            categoria_principal = "venir a los eventos religiosos"
+        elif not vc.empty:
+            categoria_principal = vc.idxmax()
+        else:
+            categoria_principal = "sin respuesta"
+
+    # 6) Conteos
+    total_motivo_sel = (motivos_norm == categoria_principal).sum()
+    total_otras = total_no_reside - total_motivo_sel
+
+    # 7) Proporción turismo (igual a antes)
+    proporcion_turismo = total_no_reside / total_encuestados
+
+    # 8) Ponderador con la categoría elegida
+    # Evita división por cero (ya controlado total_no_reside>0, pero dejamos la guardia)
+    if total_no_reside == 0:
+        ponderador = 0.0
+    else:
+        ponderador = (
+            peso_principal * (total_motivo_sel / total_no_reside) +
+            peso_otros     * (total_otras / total_no_reside)
+        )
+
+    # 9) PNL final
     PNL = (potencial_aforo * proporcion_turismo) * ponderador
 
     return {
-        "PNL": PNL,
-        "total_encuestados": total_encuestados,
-        "potencial_aforo": potencial_aforo,
-        "total_no_reside": total_no_reside,
-        "total_religioso": total_religioso,
-        "total_ocio": total_ocio,
-        "total_otros": total_otros_o_sin_respuesta,
-        "proporcion_turismo": proporcion_turismo,
-        "ponderador": ponderador,
-        "no_reside": no_reside
+        "PNL": float(PNL),
+        "total_encuestados": int(total_encuestados),
+        "potencial_aforo": float(potencial_aforo),
+        "total_no_reside": int(total_no_reside),
+        "total_motivo_seleccionado": int(total_motivo_sel),
+        "proporcion_turismo": float(proporcion_turismo),
+        "ponderador": float(ponderador),
+        "no_reside": no_reside,
+        "categoria_principal": categoria_principal,
+        "peso_principal": float(peso_principal),
+        "peso_otros": float(peso_otros)
     }
 
 def evaluar_distribuciones(df, columnas, criterio="auto"):
