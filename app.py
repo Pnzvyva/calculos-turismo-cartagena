@@ -1,8 +1,7 @@
-import streamlit as st
+import streamlit as st, numpy, pandas, sys
+import importlib
 import pandas as pd
 import io
-import scipy.stats
-from scipy.stats import shapiro
 from backend import (
     calcular_pnl,
     extraer_columnas_validas,
@@ -10,6 +9,11 @@ from backend import (
     calcular_efecto_economico_indirecto,
     detectar_categorias_motivo
 )
+
+st.caption(f"Python: {sys.version.split()[0]}")
+st.caption(f"NumPy: {numpy.__version__} | Pandas: {pandas.__version__}")
+scipy_spec = importlib.util.find_spec("scipy")
+st.caption("SciPy: OK" if scipy_spec else "SciPy: NO ENCONTRADO")
 
 # Configuración inicial de la app
 st.set_page_config(page_title="Efectos económicos de los festivales y eventos", layout="wide")

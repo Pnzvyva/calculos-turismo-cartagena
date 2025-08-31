@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-from scipy import stats as st  # ahora sí, requerido
+from scipy import stats as st  # <-- aquí sí# ahora sí, requerido
 import numpy as np
 from difflib import get_close_matches
 import unicodedata
