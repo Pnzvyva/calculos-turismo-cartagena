@@ -78,7 +78,8 @@ def calcular_pnl(
     columna_motivo: str = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?",
     categoria_principal: str | None = None,
     peso_principal: float = 1.0,
-    peso_otros: float = 0.5
+    peso_otros: float = 0.5,
+    activar_factor_correccion: bool = False,  # <-- AQUI (con rr)
 ) -> dict:
     """
     Calcula el PNL permitiendo seleccionar qué categoría de motivo es la 'principal'
@@ -171,6 +172,31 @@ def calcular_pnl(
     # 9) PNL final
     PNL = (potencial_aforo * proporcion_turismo) * ponderador
 
+    # 10) Detección de >2 categorías en motivos (solo no residentes)
+    num_categorias = motivos_norm.nunique(dropna=False)
+    detecto_mas_de_dos = num_categorias > 2
+
+    # 11) Fracciones base
+    frac_principal = (total_motivo_sel / total_no_reside) if total_no_reside else 0.0
+    frac_otras     = ((total_no_reside - total_motivo_sel) / total_no_reside) if total_no_reside else 0.0
+
+    # 12) Ponderador:
+    #     - Si hay >2 categorías Y activar_factor_correccion=True:
+    #         ponderador = ( (peso_principal - frac_otras) * frac_principal ) + ( peso_otros * frac_otras )
+    #     - En caso contrario (comportamiento original):
+    #         ponderador = ( peso_principal * frac_principal ) + ( peso_otros * frac_otras )
+    if detecto_mas_de_dos and activar_factor_correccion:
+        ponderador = ((peso_principal - frac_otras) * frac_principal) + (peso_otros * frac_otras)
+        peso_principal_efectivo = (peso_principal - frac_otras)
+        correccion_activada = True
+    else:
+        ponderador = (peso_principal * frac_principal) + (peso_otros * frac_otras)
+        peso_principal_efectivo = peso_principal
+        correccion_activada = False
+
+    # 13) PNL final
+    PNL = (potencial_aforo * proporcion_turismo) * ponderador
+
     return {
         "PNL": float(PNL),
         "total_encuestados": int(total_encuestados),
@@ -182,7 +208,12 @@ def calcular_pnl(
         "no_reside": no_reside,
         "categoria_principal": categoria_principal,
         "peso_principal": float(peso_principal),
-        "peso_otros": float(peso_otros)
+        "peso_otros": float(peso_otros),
+        "peso_principal_efectivo": float(peso_principal_efectivo),
+        "detecto_mas_de_dos_categorias": bool(detecto_mas_de_dos),
+        "num_categorias_motivo": int(num_categorias),
+        "factor_correccion_aplicado": float(frac_otras),  # (total_otras/total_no_reside)
+        "correccion_activada": bool(correccion_activada),
     }
 
 def evaluar_distribuciones(df, columnas, criterio="auto"):

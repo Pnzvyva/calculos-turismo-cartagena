@@ -86,7 +86,7 @@ if encuesta_file and aforo_file and eed_file:
         # Cálculo del PNL (modo flexible por motivo)
         st.markdown("### <i class='fas fa-users'></i> Potencial de No Locales (PNL)", unsafe_allow_html=True)
 
-        # Columnas usadas (puedes parametrizarlas después si lo deseas)
+        # Columnas usadas
         col_reside = "¿Reside en la ciudad de Cartagena de Indias?"
         col_motivo = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"
 
@@ -118,7 +118,18 @@ if encuesta_file and aforo_file and eed_file:
         peso_principal = c1.number_input("Peso categoría principal", min_value=0.0, value=1.0, step=0.1, format="%.2f")
         peso_otros     = c2.number_input("Peso otras categorías / sin respuesta", min_value=0.0, value=0.5, step=0.1, format="%.2f")
 
-        # Llamada al backend con la nueva firma
+        # ¿Hay >2 categorías? (solo entre NO residentes)
+        hay_mas_de_dos = len(categorias_disponibles) > 2 if categorias_disponibles else False
+
+        # Checkbox solo si hay >2 categorías
+        activar_factor_correccion = False
+        if hay_mas_de_dos:
+            activar_factor_correccion = st.checkbox(
+                'Se detectó > 2 categorías en la columna "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?" ¿Desea activar el factor de corrección?',
+                value=False
+            )
+
+        # Cálculo FINAL con/ sin corrección según checkbox
         resultado_pnl = calcular_pnl(
             df_encuesta=df_encuesta,
             df_aforo=df_aforo,
@@ -126,7 +137,8 @@ if encuesta_file and aforo_file and eed_file:
             columna_motivo=col_motivo,
             categoria_principal=categoria_principal,
             peso_principal=peso_principal,
-            peso_otros=peso_otros
+            peso_otros=peso_otros,
+            activar_factor_correccion=activar_factor_correccion
         )
 
         st.metric("PNL estimado", f"{resultado_pnl['PNL']:,.0f}")
@@ -137,10 +149,21 @@ if encuesta_file and aforo_file and eed_file:
             "Motivo principal seleccionado": resultado_pnl['categoria_principal'],
             "Total motivo principal": resultado_pnl['total_motivo_seleccionado'],
             "Proporción turismo": f"{resultado_pnl['proporcion_turismo']:.2%}",
-            "Ponderador": f"{resultado_pnl['ponderador']:.2f}",
-            "Peso categoría principal": f"{resultado_pnl['peso_principal']:.2f}",
-            "Peso otras categorías": f"{resultado_pnl['peso_otros']:.2f}",
+            "Ponderador": f"{resultado_pnl['ponderador']:.4f}",
+            "Peso categoría principal (input)": f"{resultado_pnl['peso_principal']:.2f}",
+            "Peso otras categorías (input)": f"{resultado_pnl['peso_otros']:.2f}",
+            "N° categorías motivo (no residentes)": resultado_pnl.get("num_categorias_motivo", None),
+            "Fracción 'otras' usada": f"{resultado_pnl.get('factor_correccion_aplicado', 0.0):.4f}",
+            "Peso principal efectivo": f"{resultado_pnl.get('peso_principal_efectivo', peso_principal):.4f}",
+            "Corrección activada": resultado_pnl.get("correccion_activada", False),
         })
+
+        # Aviso visual si la corrección está activa
+        if resultado_pnl.get("correccion_activada", False):
+            st.warning(
+                f"Corrección activada: se aplicó (peso_principal - fracción_otras) en el ponderador. "
+                f"Peso principal efectivo = {resultado_pnl.get('peso_principal_efectivo', peso_principal):.4f}"
+            )
 
         # Pruebas de normalidad de encuestas no residentes.
 
