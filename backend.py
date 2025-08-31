@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-from scipy.stats import shapiro
+from scipy import stats as st  # ahora sí, requerido
 import numpy as np
 from difflib import get_close_matches
 import unicodedata
@@ -216,44 +216,35 @@ def calcular_pnl(
         "correccion_activada": bool(correccion_activada),
     }
 
-def evaluar_distribuciones(df, columnas, criterio="auto"):
+def evaluar_distribuciones(df: pd.DataFrame, columnas: list[str]) -> dict:
     """
-    Evalúa si las columnas seleccionadas tienen distribución normal.
-    
-    Parámetros:
-        df: DataFrame
-        columnas: Lista de nombres de columnas numéricas
-        criterio: 'auto', 'Mediana' o 'Promedio'
-    
-    Retorna:
-        dict con estadísticas (p-value, media, mediana, sugerencia)
+    Media, mediana y p-value de normalidad con Shapiro.
+    Nota: Shapiro no es fiable para n > 5000, por eso muestreamos hasta 5000.
     """
     resultados = {}
     for col in columnas:
-        datos = pd.to_numeric(df[col], errors='coerce').dropna()
-        if len(datos) < 3:
-            resultados[col] = {
-                "N": len(datos),
-                "p_value": np.nan,
-                "media": np.nan,
-                "mediana": np.nan,
-                "sugerencia": "Insuficiente"
-            }
+        serie = pd.to_numeric(df[col], errors="coerce").dropna()
+        if serie.empty:
+            resultados[col] = {"media": float("nan"), "mediana": float("nan"), "p_value_shapiro": float("nan"), "n": 0}
             continue
 
-        p_valor = shapiro(datos)[1]
-        sugerencia = (
-            "Promedio" if (criterio == "auto" and p_valor > 0.05) else "Mediana"
-        ) if criterio == "auto" else criterio
+        media = float(serie.mean())
+        mediana = float(serie.median())
 
-        resultados[col] = {
-            "N": len(datos),
-            "p_value": p_valor,
-            "media": datos.mean(),
-            "mediana": datos.median(),
-            "sugerencia": sugerencia
-        }
+        n = len(serie)
+        # Shapiro: fiable hasta ~5000 obs; muestreamos si es mayor
+        if n > 5000:
+            muestra = serie.sample(n=5000, random_state=123).values
+        else:
+            muestra = serie.values
 
+        try:
+            stat, p = st.shapiro(muestra)
+            p_value = float(p)
+        except Exception:
+            p_value = float("nan")
+
+        resultados[col] = {"media": media, "mediana": mediana, "p_value_shapiro": p_value, "n": int(n)}
     return resultados
 
 def calcular_efecto_economico_indirecto(
