@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import io
+import scipy.stats
+from scipy.stats import shapiro
 from backend import (
     calcular_pnl,
     extraer_columnas_validas,
