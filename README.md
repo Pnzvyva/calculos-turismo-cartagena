@@ -1,4 +1,4 @@
-# 🧭 Análisis Económico de Eventos de Turismo en Cartagena
+# 🧭 Análisis Económico de Eventos y Turismo en Cartagena
 
 ![Streamlit](https://img.shields.io/badge/Streamlit-App-red?logo=streamlit)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python)
