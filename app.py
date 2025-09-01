@@ -42,18 +42,18 @@ aforo_file = st.sidebar.file_uploader(" Potencial de Aforo ", type=["xlsx", "csv
 eed_file = st.sidebar.file_uploader(" EED ", type=["xlsx", "csv"])
 
 # --- Descarga del archivo de multiplicadores (local) ---
-st.sidebar.markdown("### Archivo de multiplicadores")
+st.sidebar.markdown("### Archivo de Multiplicadores")
 st.sidebar.caption("Descarga el archivo de multiplicadores para editarlo y seleccionar sectores a conveniencia.")
 
 try:
-    with open("../data/multiplicadores.xlsx", "rb") as f:
+    with open("data\Multiplicadores.xlsx", "rb") as f:
         bytes_xlsx = f.read()
 
     # Descargar el Excel original
     st.sidebar.download_button(
         label="Descargar multiplicadores",
         data=bytes_xlsx,
-        file_name="multiplicadores.xlsx",
+        file_name="Multiplicadores.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
@@ -63,12 +63,12 @@ try:
     st.sidebar.download_button(
         label="Descargar como CSV",
         data=csv_norm,
-        file_name="multiplicadores.csv",
+        file_name="Multiplicadores.csv",
         mime="text/csv"
     )
 
 except FileNotFoundError:
-    st.sidebar.warning("No se encontró 'data/multiplicadores.xlsx'. Verifica la ruta o usa la plantilla.")
+    st.sidebar.warning("No se encontró 'data/Multiplicadores.xlsx'. Verifica la ruta o usa la plantilla.")
     # Plantilla por si no existe el archivo
     plantilla = pd.DataFrame({
         "C_Sector": pd.Series(dtype="Int64"),
