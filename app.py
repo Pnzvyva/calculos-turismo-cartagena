@@ -4,7 +4,6 @@ import pandas as pd
 import io
 from backend import (
     calcular_pnl,
-    extraer_columnas_validas,
     evaluar_distribuciones,
     calcular_efecto_economico_indirecto,
     detectar_categorias_motivo
