@@ -4,23 +4,26 @@ import pandas as pd
 import io
 from backend import (
     calcular_pnl,
+    extraer_columnas_validas,
     evaluar_distribuciones,
     calcular_efecto_economico_indirecto,
     detectar_categorias_motivo
 )
 
+# --- PRIMERO: configuración de página (debe ser el primer st.*) ---
+st.set_page_config(page_title="Efectos económicos de los festivales y eventos", layout="wide")
+
+# (Opcional) Diagnóstico de versiones: ahora sí, después del set_page_config
 st.caption(f"Python: {sys.version.split()[0]}")
 st.caption(f"NumPy: {numpy.__version__} | Pandas: {pandas.__version__}")
 scipy_spec = importlib.util.find_spec("scipy")
 st.caption("SciPy: OK" if scipy_spec else "SciPy: NO ENCONTRADO")
 
-# Configuración inicial de la app
-st.set_page_config(page_title="Efectos económicos de los festivales y eventos", layout="wide")
-
-# Font awesome
+# Font awesome (también después del set_page_config)
 st.markdown("""
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 """, unsafe_allow_html=True)
+
 
 #Font awesome serviar siempre y cuando se use con st.markdown y unsafe_allow_html=True sino no renderiza el html
 
