@@ -46,7 +46,7 @@ st.sidebar.markdown("### Archivo de multiplicadores")
 st.sidebar.caption("Descarga el archivo de multiplicadores para editarlo y seleccionar sectores a conveniencia.")
 
 try:
-    with open("data/multiplicadores.xlsx", "rb") as f:
+    with open("calculos-turismo-cartagena/data/multiplicadores.xlsx", "rb") as f:
         bytes_xlsx = f.read()
 
     # Descargar el Excel original
