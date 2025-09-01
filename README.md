@@ -11,7 +11,7 @@ Este proyecto analiza el impacto económico de eventos de turismo en Cartagena u
 ## 📂 Estructura del Proyecto
 
 ```plaintext
-turismo-religioso-analisis/
+calculos-turismo-cartagena/
 ├── app.py                ← Interfaz principal de Streamlit.
 ├── backend.py            ← Funciones de cálculo: PNL, efecto indirecto e inducido.
 ├── data/                 ← Carpeta sugerida para tus archivos .xlsx.
@@ -19,7 +19,6 @@ turismo-religioso-analisis/
 │   ├── Encuesta.xlsx
 │   └── Potencial_de_aforo.xlsx
 │── README.md             ← Este archivo.
-└── Environment.yml       ← Archivo de environment de facil instalacion conda. 
 ```
 
 🧠 ¿Qué hace la App?
@@ -39,7 +38,7 @@ turismo-religioso-analisis/
 
     Se multiplica el PNL estimado por:
 
-        El gasto promedio o mediano en actividades religiosas.
+        El gasto promedio del evento o sector seleccionado.
 
         El número promedio o mediano de días de estadía.
 
