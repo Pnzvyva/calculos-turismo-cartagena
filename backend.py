@@ -1,9 +1,10 @@
 import pandas as pd
 import streamlit as st
-from scipy import stats as st  # <-- aquí sí# ahora sí, requerido
+from scipy import stats as sci_stats
 import numpy as np
 from difflib import get_close_matches
 import unicodedata
+
 
 def extraer_columnas_validas(df_encuesta):
     """
@@ -29,6 +30,7 @@ def extraer_columnas_validas(df_encuesta):
             mapeo_resultante[alias] = None  # No encontrada
 
     return mapeo_resultante
+
 
 def detectar_categorias_motivo(
     df_encuesta: pd.DataFrame,
@@ -79,14 +81,12 @@ def calcular_pnl(
     categoria_principal: str | None = None,
     peso_principal: float = 1.0,
     peso_otros: float = 0.5,
-    activar_factor_correccion: bool = False,  # <-- AQUI (con rr)
+    activar_factor_correccion: bool = False,
+    factor_pt_n_sobre_rho: float | None = None,   # <<< NUEVO
 ) -> dict:
     """
     Calcula el PNL permitiendo seleccionar qué categoría de motivo es la 'principal'
     para el ponderador. El resto de categorías toman 'peso_otros'.
-
-    Ponderador = peso_principal * (total_motivo_seleccionado / total_no_reside)
-               + peso_otros     * ((total_no_reside - total_motivo_seleccionado) / total_no_reside)
     """
     # 1) Filtrado de respuestas válidas
     if columna_reside not in df_encuesta.columns:
@@ -114,7 +114,6 @@ def calcular_pnl(
     ]
     total_no_reside = no_reside.shape[0]
     if total_no_reside == 0:
-        # Sin no-residentes => PNL = 0
         return {
             "PNL": 0.0,
             "total_encuestados": total_encuestados,
@@ -126,7 +125,12 @@ def calcular_pnl(
             "no_reside": no_reside,
             "categoria_principal": categoria_principal,
             "peso_principal": peso_principal,
-            "peso_otros": peso_otros
+            "peso_otros": peso_otros,
+            # Trazabilidad PT aunque sea 0
+            "PT_con_repeticion": 0.0,
+            "PT_ajustado": 0.0,
+            "factor_pt_n_sobre_rho": None,
+            "correccion_activada": False,
         }
 
     # 4) Homogeneizar motivo
@@ -142,7 +146,6 @@ def calcular_pnl(
     )
 
     # 5) Selección de categoría principal
-    # Si no se especifica, intenta usar 'venir a los eventos religiosos' si existe; si no, toma la más frecuente
     if categoria_principal is None:
         vc = motivos_norm.value_counts(dropna=False)
         if "venir a los eventos religiosos" in vc.index:
@@ -156,46 +159,39 @@ def calcular_pnl(
     total_motivo_sel = (motivos_norm == categoria_principal).sum()
     total_otras = total_no_reside - total_motivo_sel
 
-    # 7) Proporción turismo (igual a antes)
+    # 7) Proporción turismo
     proporcion_turismo = total_no_reside / total_encuestados
 
-    # 8) Ponderador con la categoría elegida
-    # Evita división por cero (ya controlado total_no_reside>0, pero dejamos la guardia)
-    if total_no_reside == 0:
-        ponderador = 0.0
-    else:
-        ponderador = (
-            peso_principal * (total_motivo_sel / total_no_reside) +
-            peso_otros     * (total_otras / total_no_reside)
-        )
-
-    # 9) PNL final
-    PNL = (potencial_aforo * proporcion_turismo) * ponderador
-
-    # 10) Detección de >2 categorías en motivos (solo no residentes)
+    # 8) Ponderador base
+    frac_principal = (total_motivo_sel / total_no_reside) if total_no_reside else 0.0
+    frac_otras = ((total_no_reside - total_motivo_sel) / total_no_reside) if total_no_reside else 0.0
     num_categorias = motivos_norm.nunique(dropna=False)
     detecto_mas_de_dos = num_categorias > 2
 
-    # 11) Fracciones base
-    frac_principal = (total_motivo_sel / total_no_reside) if total_no_reside else 0.0
-    frac_otras     = ((total_no_reside - total_motivo_sel) / total_no_reside) if total_no_reside else 0.0
-
-    # 12) Ponderador:
-    #     - Si hay >2 categorías Y activar_factor_correccion=True:
-    #         ponderador = ( (peso_principal - frac_otras) * frac_principal ) + ( peso_otros * frac_otras )
-    #     - En caso contrario (comportamiento original):
-    #         ponderador = ( peso_principal * frac_principal ) + ( peso_otros * frac_otras )
     if detecto_mas_de_dos and activar_factor_correccion:
         ponderador = ((peso_principal - frac_otras) * frac_principal) + (peso_otros * frac_otras)
         peso_principal_efectivo = (peso_principal - frac_otras)
-        correccion_activada = True
+        correccion_ponderador_activada = True
     else:
         ponderador = (peso_principal * frac_principal) + (peso_otros * frac_otras)
         peso_principal_efectivo = peso_principal
-        correccion_activada = False
+        correccion_ponderador_activada = False
 
-    # 13) PNL final
-    PNL = (potencial_aforo * proporcion_turismo) * ponderador
+    # 9) PT con repetición (según metodología)
+    PT_con_repeticion = float(potencial_aforo) * float(proporcion_turismo)
+
+    # 10) Aplicar corrección PT̃ = (n/ρ)·PT si corresponde
+    if activar_factor_correccion and (factor_pt_n_sobre_rho is not None):
+        f = max(0.0, min(1.0, float(factor_pt_n_sobre_rho)))
+        PT_ajustado = f * PT_con_repeticion
+        correccion_pt_activada = True
+    else:
+        PT_ajustado = PT_con_repeticion
+        f = None
+        correccion_pt_activada = False
+
+    # 11) PNL final
+    PNL = PT_ajustado * float(ponderador)
 
     return {
         "PNL": float(PNL),
@@ -212,19 +208,25 @@ def calcular_pnl(
         "peso_principal_efectivo": float(peso_principal_efectivo),
         "detecto_mas_de_dos_categorias": bool(detecto_mas_de_dos),
         "num_categorias_motivo": int(num_categorias),
-        "factor_correccion_aplicado": float(frac_otras),  # (total_otras/total_no_reside)
-        "correccion_activada": bool(correccion_activada),
+        "factor_correccion_aplicado": float(frac_otras),  # (total_otras/total_no_reside) — del ponderador
+        "correccion_activada": bool(correccion_ponderador_activada or correccion_pt_activada),
+        # >>> Trazabilidad PT
+        "PT_con_repeticion": float(PT_con_repeticion),
+        "PT_ajustado": float(PT_ajustado),
+        "factor_pt_n_sobre_rho": (float(f) if f is not None else None),
     }
+
+
 
 def evaluar_distribuciones(df, columnas, criterio="auto"):
     """
     Evalúa si las columnas seleccionadas tienen distribución normal.
-    
+
     Parámetros:
         df: DataFrame
         columnas: Lista de nombres de columnas numéricas
         criterio: 'auto', 'Mediana' o 'Promedio'
-    
+
     Retorna:
         dict con estadísticas (p-value, media, mediana, sugerencia)
     """
@@ -241,7 +243,7 @@ def evaluar_distribuciones(df, columnas, criterio="auto"):
             }
             continue
 
-        p_valor = st.shapiro(datos)[1]
+        p_valor = sci_stats.shapiro(datos)[1]
         sugerencia = (
             "Promedio" if (criterio == "auto" and p_valor > 0.05) else "Mediana"
         ) if criterio == "auto" else criterio
@@ -255,6 +257,7 @@ def evaluar_distribuciones(df, columnas, criterio="auto"):
         }
 
     return resultados
+
 
 def calcular_efecto_economico_indirecto(
     stats, pnl, multiplicador, col_aloj, col_alim, col_trans, col_dias, multiplicadores=None
@@ -282,47 +285,47 @@ def calcular_efecto_economico_indirecto(
         return _num(stats[col]["media"] if sug == "Promedio" else stats[col]["mediana"])
 
     # Valores sugeridos desde stats
-    v_aloj  = _valor(col_aloj)
-    v_alim  = _valor(col_alim)
+    v_aloj = _valor(col_aloj)
+    v_alim = _valor(col_alim)
     v_trans = _valor(col_trans)
-    dias    = _valor(col_dias)
+    dias = _valor(col_dias)
 
     # Tratar NaN como 0 en gastos y días
-    v_aloj0  = 0.0 if pd.isna(v_aloj)  else v_aloj
-    v_alim0  = 0.0 if pd.isna(v_alim)  else v_alim
+    v_aloj0 = 0.0 if pd.isna(v_aloj) else v_aloj
+    v_alim0 = 0.0 if pd.isna(v_alim) else v_alim
     v_trans0 = 0.0 if pd.isna(v_trans) else v_trans
-    dias0    = 0.0 if pd.isna(dias)    else dias
+    dias0 = 0.0 if pd.isna(dias) else dias
 
     # Multiplicadores
     m_general = float(multiplicador)
     multiplicadores = multiplicadores or {}
-    m_aloj  = float(multiplicadores.get("alojamiento",  m_general))
-    m_alim  = float(multiplicadores.get("alimentacion", m_general))
-    m_trans = float(multiplicadores.get("transporte",   m_general))
+    m_aloj = float(multiplicadores.get("alojamiento", m_general))
+    m_alim = float(multiplicadores.get("alimentacion", m_general))
+    m_trans = float(multiplicadores.get("transporte", m_general))
 
     pnl_f = float(pnl)
 
     # Indirectos por rubro
-    ind_aloj  = pnl_f * v_aloj0  * dias0
-    ind_alim  = pnl_f * v_alim0  * dias0
+    ind_aloj = pnl_f * v_aloj0 * dias0
+    ind_alim = pnl_f * v_alim0 * dias0
     ind_trans = pnl_f * v_trans0 * dias0
 
     # Totales
     indirecto_total = ind_aloj + ind_alim + ind_trans
 
     # Inducidos netos por rubro (explícito)
-    inc_aloj  = (ind_aloj  * m_aloj)  - ind_aloj
-    inc_alim  = (ind_alim  * m_alim)  - ind_alim
+    inc_aloj = (ind_aloj * m_aloj) - ind_aloj
+    inc_alim = (ind_alim * m_alim) - ind_alim
     inc_trans = (ind_trans * m_trans) - ind_trans
     inducido_neto_total = inc_aloj + inc_alim + inc_trans  # suma por rubro
 
     # Desglose para la UI
     desglose = [
-        {"Rubro": "Alojamiento",  "Gasto diario usado": v_aloj0,  "Indirecto": ind_aloj,  "Inducido neto": inc_aloj},
-        {"Rubro": "Alimentación", "Gasto diario usado": v_alim0,  "Indirecto": ind_alim,  "Inducido neto": inc_alim},
-        {"Rubro": "Transporte",   "Gasto diario usado": v_trans0, "Indirecto": ind_trans, "Inducido neto": inc_trans},
-        {"Rubro": "Total",        "Gasto diario usado": v_aloj0 + v_alim0 + v_trans0,
-                                   "Indirecto": indirecto_total, "Inducido neto": inducido_neto_total},
+        {"Rubro": "Alojamiento", "Gasto diario usado": v_aloj0, "Indirecto": ind_aloj, "Inducido neto": inc_aloj},
+        {"Rubro": "Alimentación", "Gasto diario usado": v_alim0, "Indirecto": ind_alim, "Inducido neto": inc_alim},
+        {"Rubro": "Transporte", "Gasto diario usado": v_trans0, "Indirecto": ind_trans, "Inducido neto": inc_trans},
+        {"Rubro": "Total", "Gasto diario usado": v_aloj0 + v_alim0 + v_trans0,
+         "Indirecto": indirecto_total, "Inducido neto": inducido_neto_total},
     ]
 
     resultado = {
