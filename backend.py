@@ -162,20 +162,13 @@ def calcular_pnl(
     # 7) Proporción turismo
     proporcion_turismo = total_no_reside / total_encuestados
 
-    # 8) Ponderador base
+    # 8) Ponderador base (NO se corrige nunca con n/ρ)
     frac_principal = (total_motivo_sel / total_no_reside) if total_no_reside else 0.0
     frac_otras = ((total_no_reside - total_motivo_sel) / total_no_reside) if total_no_reside else 0.0
     num_categorias = motivos_norm.nunique(dropna=False)
-    detecto_mas_de_dos = num_categorias > 2
 
-    if detecto_mas_de_dos and activar_factor_correccion:
-        ponderador = ((peso_principal - frac_otras) * frac_principal) + (peso_otros * frac_otras)
-        peso_principal_efectivo = (peso_principal - frac_otras)
-        correccion_ponderador_activada = True
-    else:
-        ponderador = (peso_principal * frac_principal) + (peso_otros * frac_otras)
-        peso_principal_efectivo = peso_principal
-        correccion_ponderador_activada = False
+    ponderador = (peso_principal * frac_principal) + (peso_otros * frac_otras)
+    peso_principal_efectivo = peso_principal
 
     # 9) PT con repetición (según metodología)
     PT_con_repeticion = float(potencial_aforo) * float(proporcion_turismo)
@@ -193,6 +186,7 @@ def calcular_pnl(
     # 11) PNL final
     PNL = PT_ajustado * float(ponderador)
 
+
     return {
         "PNL": float(PNL),
         "total_encuestados": int(total_encuestados),
@@ -206,13 +200,10 @@ def calcular_pnl(
         "peso_principal": float(peso_principal),
         "peso_otros": float(peso_otros),
         "peso_principal_efectivo": float(peso_principal_efectivo),
-        "detecto_mas_de_dos_categorias": bool(detecto_mas_de_dos),
         "num_categorias_motivo": int(num_categorias),
         "factor_correccion_aplicado": float(frac_otras),  # (total_otras/total_no_reside) — del ponderador
-        "correccion_activada": bool(correccion_ponderador_activada or correccion_pt_activada),
+        "correccion_activada": bool(correccion_pt_activada),
         # >>> Trazabilidad PT
-        "PT_con_repeticion": float(PT_con_repeticion),
-        "PT_ajustado": float(PT_ajustado),
         "factor_pt_n_sobre_rho": (float(f) if f is not None else None),
     }
 

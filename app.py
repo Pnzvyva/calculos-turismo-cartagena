@@ -123,19 +123,13 @@ if encuesta_file and aforo_file and eed_file:
             "No residentes": resultado_pnl['total_no_reside'],
             "Motivo principal seleccionado": resultado_pnl['categoria_principal'],
             "Total motivo principal": resultado_pnl['total_motivo_seleccionado'],
-            "Proporción turismo": f"{resultado_pnl['proporcion_turismo']:.2%}",
-            "Ponderador": f"{resultado_pnl['ponderador']:.4f}",
+            "Proporción de visitantes no residentes": f"{resultado_pnl['proporcion_turismo']:.2%}",
             "Peso categoría principal (input)": f"{resultado_pnl['peso_principal']:.2f}",
             "Peso otras categorías (input)": f"{resultado_pnl['peso_otros']:.2f}",
-            "N° categorías motivo (no residentes)": resultado_pnl.get("num_categorias_motivo", None),
-            "Fracción 'otras' usada": f"{resultado_pnl.get('factor_correccion_aplicado', 0.0):.4f}",
-            "Peso principal efectivo": f"{resultado_pnl.get('peso_principal_efectivo', peso_principal):.4f}",
-            "Corrección activada": resultado_pnl.get("correccion_activada", False),
+            "N° categorías de motivo (no residentes)": resultado_pnl.get("num_categorias_motivo", None),
+            "Proporción de no residentes que, aunque viajan por otros motivos, terminan asistiendo al evento": f"{resultado_pnl.get('factor_correccion_aplicado', 0.0):.4f}",
             # >>> NUEVOS CAMPOS TRAZABILIDAD PT
-            "PT (con repetición)": f"{resultado_pnl.get('PT_con_repeticion', float('nan')):,.0f}",
             "Factor n/ρ (si aplica)": f"{resultado_pnl.get('factor_pt_n_sobre_rho', float('nan')):.6f}"
-                if resultado_pnl.get("correccion_activada") else "—",
-            "PT̃ (sin repetición, si aplica)": f"{resultado_pnl.get('PT_ajustado', float('nan')):,.0f}"
                 if resultado_pnl.get("correccion_activada") else "—",
         })
 
