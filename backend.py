@@ -251,37 +251,35 @@ def evaluar_distribuciones(df, columnas, criterio="auto"):
 
 
 def calcular_efecto_economico_indirecto(
-    stats, pnl, multiplicador, col_aloj, col_alim, col_trans, col_dias, multiplicadores=None
+    stats,
+    pnl,
+    multiplicador,
+    col_aloj,
+    col_alim,
+    col_trans,
+    col_dias,
+    multiplicadores=None,
+    extras=None,  # <<< NUEVO: lista de dicts [{"name": "...", "col": "...", "mult": float}, ...]
 ):
     """
     Calcula efectos por rubro usando los valores sugeridos de `stats`.
-    Para cada rubro r en {alojamiento, alimentación, transporte}:
-        Indirecto_r       = PNL * (valor_sugerido_r) * (dias_sugerido)
-        InducidoNeto_r    = (Indirecto_r * m_r) - Indirecto_r
-    donde m_r es el multiplicador por rubro si viene en `multiplicadores`,
-    o en su defecto `multiplicador` (general).
+    Rubros base: alojamiento, alimentación, transporte.
+    Extras: lista opcional de sectores adicionales con su columna y multiplicador.
 
-    Retorna:
-      - resultado (resumen total)
-      - desglose (lista por rubro y total con valores numéricos)
+    Para cada rubro r:
+        Indirecto_r    = PNL * (valor_sugerido_r) * (dias_sugerido)
+        InducidoNeto_r = (Indirecto_r * m_r) - Indirecto_r
     """
     def _num(x):
-        try:
-            return float(x)
-        except (TypeError, ValueError):
-            return float("nan")
+        try: return float(x)
+        except (TypeError, ValueError): return float("nan")
 
     def _valor(col):
         sug = stats[col]["sugerencia"]
         return _num(stats[col]["media"] if sug == "Promedio" else stats[col]["mediana"])
 
     # Valores sugeridos desde stats
-    v_aloj = _valor(col_aloj)
-    v_alim = _valor(col_alim)
-    v_trans = _valor(col_trans)
-    dias = _valor(col_dias)
-
-    # Tratar NaN como 0 en gastos y días
+    v_aloj = _valor(col_aloj); v_alim = _valor(col_alim); v_trans = _valor(col_trans); dias = _valor(col_dias)
     v_aloj0 = 0.0 if pd.isna(v_aloj) else v_aloj
     v_alim0 = 0.0 if pd.isna(v_alim) else v_alim
     v_trans0 = 0.0 if pd.isna(v_trans) else v_trans
@@ -296,28 +294,55 @@ def calcular_efecto_economico_indirecto(
 
     pnl_f = float(pnl)
 
-    # Indirectos por rubro
+    # ---- Base: 3 rubros
     ind_aloj = pnl_f * v_aloj0 * dias0
     ind_alim = pnl_f * v_alim0 * dias0
     ind_trans = pnl_f * v_trans0 * dias0
 
-    # Totales
     indirecto_total = ind_aloj + ind_alim + ind_trans
-
-    # Inducidos netos por rubro (explícito)
     inc_aloj = (ind_aloj * m_aloj) - ind_aloj
     inc_alim = (ind_alim * m_alim) - ind_alim
     inc_trans = (ind_trans * m_trans) - ind_trans
-    inducido_neto_total = inc_aloj + inc_alim + inc_trans  # suma por rubro
+    inducido_neto_total = inc_aloj + inc_alim + inc_trans
 
-    # Desglose para la UI
     desglose = [
         {"Rubro": "Alojamiento", "Gasto diario usado": v_aloj0, "Indirecto": ind_aloj, "Inducido neto": inc_aloj},
         {"Rubro": "Alimentación", "Gasto diario usado": v_alim0, "Indirecto": ind_alim, "Inducido neto": inc_alim},
-        {"Rubro": "Transporte", "Gasto diario usado": v_trans0, "Indirecto": ind_trans, "Inducido neto": inc_trans},
-        {"Rubro": "Total", "Gasto diario usado": v_aloj0 + v_alim0 + v_trans0,
-         "Indirecto": indirecto_total, "Inducido neto": inducido_neto_total},
+        {"Rubro": "Transporte",  "Gasto diario usado": v_trans0, "Indirecto": ind_trans, "Inducido neto": inc_trans},
     ]
+
+    # ---- Extras dinámicos
+    extras = extras or []
+    mult_extras_dict = {}  # para devolver trazabilidad de multiplicadores de extras
+    for ex in extras:
+        name = str(ex.get("name", "Sector extra")).strip()
+        col  = ex.get("col")
+        m_ex = float(ex.get("mult", m_general))
+        if not col or col not in stats:
+            # columna inválida: registra en 0 para no romper cálculo
+            v_ex0 = 0.0
+        else:
+            v_ex = _valor(col)
+            v_ex0 = 0.0 if pd.isna(v_ex) else v_ex
+
+        ind_ex = pnl_f * v_ex0 * dias0
+        inc_ex = (ind_ex * m_ex) - ind_ex
+
+        indirecto_total += ind_ex
+        inducido_neto_total += inc_ex
+        desglose.append({"Rubro": name, "Gasto diario usado": v_ex0, "Indirecto": ind_ex, "Inducido neto": inc_ex})
+        mult_extras_dict[name] = m_ex
+
+    # Fila total
+    total_gasto_diario_usado = v_aloj0 + v_alim0 + v_trans0 + sum(
+        0.0 if pd.isna(_valor(ex["col"])) else (_valor(ex["col"])) for ex in extras if ex.get("col") in (stats or {})
+    )
+    desglose.append({
+        "Rubro": "Total",
+        "Gasto diario usado": total_gasto_diario_usado,
+        "Indirecto": indirecto_total,
+        "Inducido neto": inducido_neto_total
+    })
 
     resultado = {
         "PNL": pnl_f,
@@ -326,8 +351,131 @@ def calcular_efecto_economico_indirecto(
         "Multiplicador alojamiento": m_aloj,
         "Multiplicador alimentación": m_alim,
         "Multiplicador transporte": m_trans,
+        "Multiplicadores extras": mult_extras_dict,  # <<< NUEVO
         "Efecto Indirecto Total": indirecto_total,
         "Efecto Inducido Neto Total": inducido_neto_total
     }
-
     return resultado, desglose
+
+def calcular_desglose_por_sectores(
+    df_eed: pd.DataFrame,
+    pnl: float,
+    dias_usado: float,
+    col_sector: str = "Sector_EED",
+    col_valor: str = "V_EED",
+    config_sectores: list | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Construye una tabla sectorial:
+      - 'Efecto directo' = suma de V_EED por Sector_EED.
+      - Opcional: 'Efecto indirecto' = PNL * gasto_sector * dias_usado (si activar=True).
+      - 'Total, efecto inducido neto' = (Indirecto * mult_sector) - Indirecto.
+
+    Parámetros:
+      df_eed: DataFrame con columnas col_sector y col_valor
+      pnl: PNL total (float)
+      dias_usado: días a usar para el cálculo (float)
+      col_sector, col_valor: nombres de columnas en df_eed
+      config_sectores: lista de dicts por sector:
+         [{"sector": str, "activar": bool, "gasto": float, "multiplicador": float}, ...]
+
+    Retorna:
+      - df_resultado: DataFrame con columnas ['Sector','Efecto directo','Efecto indirecto','Total, efecto inducido neto']
+      - meta: dict con trazabilidad
+    """
+    if col_sector not in df_eed.columns or col_valor not in df_eed.columns:
+        raise ValueError(f"EED debe tener columnas '{col_sector}' y '{col_valor}'.")
+
+    # Agregación por sector: efecto directo
+    df_base = (
+        df_eed[[col_sector, col_valor]]
+        .assign(**{col_valor: pd.to_numeric(df_eed[col_valor], errors="coerce")})
+        .groupby(col_sector, dropna=False, as_index=False)
+        .sum()
+        .rename(columns={col_sector: "Sector", col_valor: "Efecto directo"})
+    )
+
+    # Índices y defaults de config
+    cfg_map = {}
+    for _, row in df_base.iterrows():
+        nombre = str(row["Sector"])
+        cfg_map[nombre] = {"activar": False, "gasto": 0.0, "multiplicador": 1.0}
+
+    if config_sectores:
+        for c in config_sectores:
+            nombre = str(c.get("sector", ""))
+            if nombre in cfg_map:
+                cfg_map[nombre]["activar"] = bool(c.get("activar", False))
+                cfg_map[nombre]["gasto"] = float(c.get("gasto", 0.0))
+                cfg_map[nombre]["multiplicador"] = float(c.get("multiplicador", 1.0))
+
+    # Cálculos
+    efectos_indirecto = []
+    efectos_inducido = []
+    trazas = {}
+
+    for _, row in df_base.iterrows():
+        nombre = str(row["Sector"])
+        cfg = cfg_map[nombre]
+        if cfg["activar"]:
+            indirecto = float(pnl) * float(cfg["gasto"]) * float(dias_usado)
+            inducido_neto = (indirecto * cfg["multiplicador"]) - indirecto
+        else:
+            indirecto = 0.0
+            inducido_neto = 0.0
+
+        efectos_indirecto.append(indirecto)
+        efectos_inducido.append(inducido_neto)
+        trazas[nombre] = {
+            "usar_indirecto": cfg["activar"],
+            "gasto_sector": cfg["gasto"],
+            "multiplicador_sector": cfg["multiplicador"],
+        }
+
+    df_res = df_base.copy()
+    df_res["Efecto indirecto"] = efectos_indirecto
+    df_res["Total, efecto inducido neto"] = efectos_inducido
+
+    # --- NUEVO: Efecto económico total y % participación
+    df_res["Efecto económico total"] = (
+        df_res["Efecto directo"]
+        + df_res["Efecto indirecto"]
+        + df_res["Total, efecto inducido neto"]
+    )
+    total_eco = float(df_res["Efecto económico total"].sum())
+    if total_eco > 0:
+        df_res["% efecto económico total"] = df_res["Efecto económico total"] / total_eco
+    else:
+        df_res["% efecto económico total"] = 0.0
+
+    # Fila Total
+    fila_total = pd.DataFrame({
+        "Sector": ["Total"],
+        "Efecto directo": [df_res["Efecto directo"].sum()],
+        "Efecto indirecto": [df_res["Efecto indirecto"].sum()],
+        "Total, efecto inducido neto": [df_res["Total, efecto inducido neto"].sum()],
+        "Efecto económico total": [df_res["Efecto económico total"].sum()],
+        "% efecto económico total": [1.0],
+    })
+
+    df_res = pd.concat([df_res, fila_total], ignore_index=True)
+
+    # (Opcional) ordenar columnas
+    cols = [
+        "Sector",
+        "Efecto directo",
+        "Efecto indirecto",
+        "Total, efecto inducido neto",
+        "Efecto económico total",
+        "% efecto económico total",
+    ]
+    df_res = df_res[cols]
+
+    meta = {
+        "PNL_usado": float(pnl),
+        "dias_usado": float(dias_usado),
+        "config_aplicada": trazas,
+        "total_efecto_economico": float(total_eco),
+    }
+    return df_res, meta
+
