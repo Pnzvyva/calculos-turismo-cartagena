@@ -366,22 +366,17 @@ def calcular_desglose_por_sectores(
     config_sectores: list | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """
-    Construye una tabla sectorial:
+    Construye una tabla sectorial a partir del EED:
       - 'Efecto directo' = suma de V_EED por Sector_EED.
       - Opcional: 'Efecto indirecto' = PNL * gasto_sector * dias_usado (si activar=True).
-      - 'Total, efecto inducido neto' = (Indirecto * mult_sector) - Indirecto.
-
-    Parámetros:
-      df_eed: DataFrame con columnas col_sector y col_valor
-      pnl: PNL total (float)
-      dias_usado: días a usar para el cálculo (float)
-      col_sector, col_valor: nombres de columnas en df_eed
-      config_sectores: lista de dicts por sector:
-         [{"sector": str, "activar": bool, "gasto": float, "multiplicador": float}, ...]
+      - 'Total, efecto inducido neto' = inducido(directo) + inducido(indirecto)
+           donde inducido(x) = (x * multiplicador) - x.
 
     Retorna:
-      - df_resultado: DataFrame con columnas ['Sector','Efecto directo','Efecto indirecto','Total, efecto inducido neto']
-      - meta: dict con trazabilidad
+      - df_resultado con columnas:
+          ['Sector','Efecto directo','Efecto indirecto',
+           'Total, efecto inducido neto','Efecto económico total','% efecto económico total']
+      - meta: dict con trazabilidad.
     """
     if col_sector not in df_eed.columns or col_valor not in df_eed.columns:
         raise ValueError(f"EED debe tener columnas '{col_sector}' y '{col_valor}'.")
@@ -395,12 +390,13 @@ def calcular_desglose_por_sectores(
         .rename(columns={col_sector: "Sector", col_valor: "Efecto directo"})
     )
 
-    # Índices y defaults de config
+    # Config default por sector
     cfg_map = {}
     for _, row in df_base.iterrows():
         nombre = str(row["Sector"])
         cfg_map[nombre] = {"activar": False, "gasto": 0.0, "multiplicador": 1.0}
 
+    # Sobrescribir con configuración provista por la UI
     if config_sectores:
         for c in config_sectores:
             nombre = str(c.get("sector", ""))
@@ -409,34 +405,45 @@ def calcular_desglose_por_sectores(
                 cfg_map[nombre]["gasto"] = float(c.get("gasto", 0.0))
                 cfg_map[nombre]["multiplicador"] = float(c.get("multiplicador", 1.0))
 
-    # Cálculos
     efectos_indirecto = []
     efectos_inducido = []
     trazas = {}
 
+    # Cálculos por sector
     for _, row in df_base.iterrows():
         nombre = str(row["Sector"])
+        directo = float(row["Efecto directo"]) if pd.notna(row["Efecto directo"]) else 0.0
         cfg = cfg_map[nombre]
+        m = float(cfg["multiplicador"])
+
+        # Indirecto (opcional)
         if cfg["activar"]:
             indirecto = float(pnl) * float(cfg["gasto"]) * float(dias_usado)
-            inducido_neto = (indirecto * cfg["multiplicador"]) - indirecto
         else:
             indirecto = 0.0
-            inducido_neto = 0.0
+
+        # NUEVA FÓRMULA: inducido neto = inducido(directo) + inducido(indirecto)
+        inc_directo = (directo * m) - directo
+        inc_indirecto = (indirecto * m) - indirecto
+        inducido_neto = inc_directo + inc_indirecto
 
         efectos_indirecto.append(indirecto)
         efectos_inducido.append(inducido_neto)
+
         trazas[nombre] = {
             "usar_indirecto": cfg["activar"],
-            "gasto_sector": cfg["gasto"],
-            "multiplicador_sector": cfg["multiplicador"],
+            "gasto_sector": float(cfg["gasto"]),
+            "multiplicador_sector": m,
+            "inducido_directo": inc_directo,
+            "inducido_indirecto": inc_indirecto,
         }
 
+    # Construcción de la tabla
     df_res = df_base.copy()
     df_res["Efecto indirecto"] = efectos_indirecto
     df_res["Total, efecto inducido neto"] = efectos_inducido
 
-    # --- NUEVO: Efecto económico total y % participación
+    # Efecto económico total y participación
     df_res["Efecto económico total"] = (
         df_res["Efecto directo"]
         + df_res["Efecto indirecto"]
@@ -457,10 +464,9 @@ def calcular_desglose_por_sectores(
         "Efecto económico total": [df_res["Efecto económico total"].sum()],
         "% efecto económico total": [1.0],
     })
-
     df_res = pd.concat([df_res, fila_total], ignore_index=True)
 
-    # (Opcional) ordenar columnas
+    # Orden de columnas
     cols = [
         "Sector",
         "Efecto directo",
@@ -478,4 +484,5 @@ def calcular_desglose_por_sectores(
         "total_efecto_economico": float(total_eco),
     }
     return df_res, meta
+
 

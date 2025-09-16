@@ -239,11 +239,11 @@ if encuesta_file and aforo_file and eed_file:
                 except (ValueError, TypeError):
                     return x
 
-            # Desglose por rubro
+            # Desglose por rubro, tener en cuenta que el inducido neto en este caso unicamente es el inducido indirecto
             df_desglose = pd.DataFrame(desglose, columns=["Rubro", "Gasto diario usado", "Indirecto", "Inducido neto"])
             for c in ["Gasto diario usado", "Indirecto", "Inducido neto"]:
                 df_desglose[c] = df_desglose[c].apply(_fmt_num)
-
+            
             st.subheader("Desglose por rubro")
             st.dataframe(df_desglose, use_container_width=True)
 
