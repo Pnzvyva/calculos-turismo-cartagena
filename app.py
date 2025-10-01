@@ -48,8 +48,8 @@ if encuesta_file and aforo_file and eed_file:
         st.markdown("### <i class='fas fa-users'></i> Potencial de No Locales (PNL)", unsafe_allow_html=True)
 
         # Columnas usadas
-        col_reside = "¿Reside en la ciudad de Cartagena de Indias?"
-        col_motivo = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"
+        col_reside = "¿Reside en la ciudad donde se desarrolla este evento?"
+        col_motivo = "¿Cuál fue el motivo de su viaje a esta ciudad o municipio?"
 
         # Detectar categorías disponibles entre NO residentes
         try:
