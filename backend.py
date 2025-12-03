@@ -73,7 +73,7 @@ def detectar_categorias_motivo(
     return motivos.value_counts(dropna=False)
 
 
-def calcular_pnl(
+def calcular_poblacion(
     df_encuesta: pd.DataFrame,
     df_aforo: pd.DataFrame,
     columna_reside: str = "¿Reside en la ciudad de Cartagena de Indias?",
@@ -82,7 +82,8 @@ def calcular_pnl(
     peso_principal: float = 1.0,
     peso_otros: float = 0.5,
     activar_factor_correccion: bool = False,
-    factor_pt_n_sobre_rho: float | None = None,   # <<< NUEVO
+    factor_pt_n_sobre_rho: float | None = None,
+    tipo_poblacion: str = "no_local",   # <<< NUEVO
 ) -> dict:
     """
     Calcula el PNL permitiendo seleccionar qué categoría de motivo es la 'principal'
@@ -106,39 +107,53 @@ def calcular_pnl(
         raise ValueError("El archivo de Aforo debe tener la columna 'Potencial de aforo'.")
     potencial_aforo = pd.to_numeric(df_aforo["Potencial de aforo"], errors="coerce").fillna(0).sum()
 
-    # 3) NO residentes
-    no_reside = df_encuesta_responde[
-        df_encuesta_responde[columna_reside]
-        .astype(str).str.strip().str.lower()
-        .eq("no")
-    ]
-    total_no_reside = no_reside.shape[0]
-    if total_no_reside == 0:
+
+
+    # --- Selección del grupo según tipo_poblacion ---
+    res_col = df_encuesta_responde[columna_reside].astype(str).str.strip().str.lower()
+
+    if tipo_poblacion == "no_local":
+        df_grupo = df_encuesta_responde[res_col.eq("no")]
+
+    elif tipo_poblacion == "local":
+        df_grupo = df_encuesta_responde[res_col.isin(["sí", "si"])]
+
+    elif tipo_poblacion == "ambos":
+        df_grupo = df_encuesta_responde.copy()
+
+    else:
+        raise ValueError("tipo_poblacion debe ser 'no_local', 'local' o 'ambos'")
+
+    total_grupo = df_grupo.shape[0]
+
+    # Si no hay casos en la muestra → todo en cero
+    if total_grupo == 0:
         return {
-            "PNL": 0.0,
+            "Poblacion_estimacion": 0.0,
+            "tipo": tipo_poblacion,
             "total_encuestados": total_encuestados,
-            "potencial_aforo": potencial_aforo,
-            "total_no_reside": 0,
+            "potencial_aforo": float(potencial_aforo),
+            "total_grupo": 0,
             "total_motivo_seleccionado": 0,
-            "proporcion_turismo": 0.0,
+            "proporcion_grupo": 0.0,
             "ponderador": 0.0,
-            "no_reside": no_reside,
+            "grupo": df_grupo,
             "categoria_principal": categoria_principal,
             "peso_principal": peso_principal,
             "peso_otros": peso_otros,
-            # Trazabilidad PT aunque sea 0
             "PT_con_repeticion": 0.0,
             "PT_ajustado": 0.0,
             "factor_pt_n_sobre_rho": None,
             "correccion_activada": False,
         }
 
+
     # 4) Homogeneizar motivo
     if columna_motivo not in df_encuesta.columns:
         raise ValueError(f"No se encontró la columna de motivo: '{columna_motivo}'")
 
     motivos_norm = (
-        no_reside[columna_motivo]
+        df_grupo[columna_motivo]
         .astype(str)
         .str.strip()
         .replace({"": "sin respuesta"})
@@ -157,21 +172,20 @@ def calcular_pnl(
 
     # 6) Conteos
     total_motivo_sel = (motivos_norm == categoria_principal).sum()
-    total_otras = total_no_reside - total_motivo_sel
+    total_otras = total_grupo - total_motivo_sel
 
     # 7) Proporción turismo
-    proporcion_turismo = total_no_reside / total_encuestados
-
+    proporcion_grupo = total_grupo / total_encuestados
     # 8) Ponderador base (NO se corrige nunca con n/ρ)
-    frac_principal = (total_motivo_sel / total_no_reside) if total_no_reside else 0.0
-    frac_otras = ((total_no_reside - total_motivo_sel) / total_no_reside) if total_no_reside else 0.0
+    frac_principal = (total_motivo_sel / total_grupo) if total_grupo else 0.0
+    frac_otras = ((total_grupo - total_motivo_sel) / total_grupo) if total_grupo else 0.0
     num_categorias = motivos_norm.nunique(dropna=False)
 
     ponderador = (peso_principal * frac_principal) + (peso_otros * frac_otras)
     peso_principal_efectivo = peso_principal
 
     # 9) PT con repetición (según metodología)
-    PT_con_repeticion = float(potencial_aforo) * float(proporcion_turismo)
+    PT_con_repeticion = float(potencial_aforo) * float(proporcion_grupo)
 
     # 10) Aplicar corrección PT̃ = (n/ρ)·PT si corresponde
     if activar_factor_correccion and (factor_pt_n_sobre_rho is not None):
@@ -188,14 +202,15 @@ def calcular_pnl(
 
 
     return {
-        "PNL": float(PNL),
+        "Poblacion_estimacion": float(PNL),
+        "tipo": tipo_poblacion,
         "total_encuestados": int(total_encuestados),
         "potencial_aforo": float(potencial_aforo),
-        "total_no_reside": int(total_no_reside),
+        "total_grupo": int(total_grupo),
         "total_motivo_seleccionado": int(total_motivo_sel),
-        "proporcion_turismo": float(proporcion_turismo),
+        "proporcion_grupo": float(proporcion_grupo),
         "ponderador": float(ponderador),
-        "no_reside": no_reside,
+        "grupo": df_grupo,
         "categoria_principal": categoria_principal,
         "peso_principal": float(peso_principal),
         "peso_otros": float(peso_otros),
