@@ -48,8 +48,8 @@ if encuesta_file and aforo_file and eed_file:
         st.markdown("### <i class='fas fa-users'></i> Potencial de No Locales (PNL)", unsafe_allow_html=True)
 
         # Columnas usadas
-        col_reside = "¿Reside en la ciudad de Cartagena de Indias?"
-        col_motivo = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"
+        col_reside = "¿Reside en la ciudad donde se desarrolla este evento?"
+        col_motivo = "¿Cuál fue el motivo de su viaje a esta ciudad o municipio?"
 
         # Detectar categorías disponibles entre NO residentes
         try:
@@ -265,11 +265,11 @@ if encuesta_file and aforo_file and eed_file:
                 except (ValueError, TypeError):
                     return x
 
-            # Desglose por rubro
+            # Desglose por rubro, tener en cuenta que el inducido neto en este caso unicamente es el inducido indirecto
             df_desglose = pd.DataFrame(desglose, columns=["Rubro", "Gasto diario usado", "Indirecto", "Inducido neto"])
             for c in ["Gasto diario usado", "Indirecto", "Inducido neto"]:
                 df_desglose[c] = df_desglose[c].apply(_fmt_num)
-
+            
             st.subheader("Desglose por rubro")
             st.dataframe(df_desglose, use_container_width=True)
 
