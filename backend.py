@@ -13,7 +13,7 @@ def extraer_columnas_validas(df_encuesta):
     """
     columnas_esperadas = {
         "gasto_evento": "¿Cuánto ha gastado aproximadamente en actividades relacionadas con LOS EVENTOS RELIGIOSOS DE SEMANA SANTA EN CARTAGENA (souvenirs, artesanías, libros, etc.)?",
-        "dias_estadia": "¿Cuántos días estará en la ciudad donde se desarrolla este evento?",
+        "dias_estadia": "¿Cuántos días estará en la ciudad de Cartagena?",
         "gasto_alojamiento": "¿Cuánto está gastando gasto diariamente en alojamiento? (Por persona):",
         "gasto_alimentacion": "En promedio ¿Cuánto ha sido su gasto diario en alimentación y bebidas durante su estadía en la ciudad?",
         "gasto_transporte": "En promedio ¿Cuánto ha sido su gasto diario en transporte durante su estadía en la ciudad?"
@@ -34,8 +34,8 @@ def extraer_columnas_validas(df_encuesta):
 
 def detectar_categorias_motivo(
     df_encuesta: pd.DataFrame,
-    columna_reside: str = "¿Reside en la ciudad donde se desarrolla este evento?",
-    columna_motivo: str = "¿Cuál fue el motivo de su viaje a esta ciudad o municipio?"
+    columna_reside: str = "¿Reside en la ciudad de Cartagena de Indias?",
+    columna_motivo: str = "¿Cuál fue el motivo de su viaje a la ciudad de Cartagena?"
 ) -> pd.Series:
     """
     Devuelve un Series con el conteo de categorías de motivo entre NO residentes.
@@ -73,155 +73,188 @@ def detectar_categorias_motivo(
     return motivos.value_counts(dropna=False)
 
 
-def calcular_poblacion(
-    df_encuesta: pd.DataFrame,
-    df_aforo: pd.DataFrame,
-    columna_reside: str = "¿Reside en la ciudad donde se desarrolla este evento?",
-    columna_motivo: str = "¿Cuál fue el motivo de su viaje a esta ciudad o municipio?",
-    categoria_principal: str | None = None,
-    peso_principal: float = 1.0,
-    peso_otros: float = 0.5,
-    activar_factor_correccion: bool = False,
-    factor_pt_n_sobre_rho: float | None = None,
-    tipo_poblacion: str = "no_local",   # <<< NUEVO
-) -> dict:
-    """
-    Calcula el PNL permitiendo seleccionar qué categoría de motivo es la 'principal'
-    para el ponderador. El resto de categorías toman 'peso_otros'.
-    """
-    # 1) Filtrado de respuestas válidas
-    if columna_reside not in df_encuesta.columns:
-        raise ValueError(f"No se encontró la columna de residencia: '{columna_reside}'")
+# =============================================================================
+# FUNCIÓN PRINCIPAL: CALCULAR POBLACIÓN (PNL, PL, AMBOS)
+# Compatible 100% con tu app.py
+# =============================================================================
 
-    df_encuesta_responde = df_encuesta[
+def calcular_poblacion(
+    df_encuesta,
+    df_aforo,
+    columna_reside,
+    columna_motivo,
+    categoria_principal,
+
+    # PONDERADORES SEPARADOS
+    peso_principal_no_local=1.0,
+    peso_otros_no_local=0.5,
+    peso_principal_local=1.0,
+    peso_otros_local=0.5,
+
+    activar_factor_correccion=False,
+    factor_pt_n_sobre_rho=None,
+    tipo_poblacion="no_local"
+):
+
+    # ----------------- VALIDACIONES -----------------
+    if columna_reside not in df_encuesta.columns:
+        raise ValueError(f"No existe columna '{columna_reside}'")
+    if columna_motivo not in df_encuesta.columns:
+        raise ValueError(f"No existe columna '{columna_motivo}'")
+    if "Potencial de aforo" not in df_aforo.columns:
+        raise ValueError("El archivo de Aforo necesita la columna 'Potencial de aforo'")
+
+    # ----------------- LIMPIEZA -----------------
+    df_responde = df_encuesta[
         df_encuesta[columna_reside]
         .astype(str).str.strip().str.lower()
         .isin(["sí", "si", "no"])
     ]
-    total_encuestados = df_encuesta_responde.shape[0]
-    if total_encuestados == 0:
-        raise ValueError("No hay encuestados válidos (Sí/No) en la columna de residencia.")
 
-    # 2) Potencial de aforo (suma de todos los eventos)
-    if "Potencial de aforo" not in df_aforo.columns:
-        raise ValueError("El archivo de Aforo debe tener la columna 'Potencial de aforo'.")
+    total_encuestados = df_responde.shape[0]
+    if total_encuestados == 0:
+        return {"Poblacion_estimacion": 0}
+
+    res = df_responde[columna_reside].astype(str).str.strip().str.lower()
     potencial_aforo = pd.to_numeric(df_aforo["Potencial de aforo"], errors="coerce").fillna(0).sum()
 
+    df_no_local = df_responde[res.eq("no")]
+    df_local = df_responde[res.isin(["sí", "si"])]
 
 
-    # --- Selección del grupo según tipo_poblacion ---
-    res_col = df_encuesta_responde[columna_reside].astype(str).str.strip().str.lower()
+    # ----------------- AUXILIAR: CALCULO INDIVIDUAL -----------------
+    def _segmento(df_seg, peso_principal, peso_otros):
+        if df_seg.empty:
+            return 0, 0, 0, 0, 0, 0, 0
+
+        motivos = (
+            df_seg[columna_motivo]
+            .astype(str).str.strip()
+            .replace({"": "sin respuesta"})
+            .str.lower()
+        )
+
+        if categoria_principal is None:
+            vc = motivos.value_counts(dropna=False)
+            categoria = vc.idxmax() if not vc.empty else "sin respuesta"
+        else:
+            categoria = categoria_principal
+
+        total_seg = df_seg.shape[0]
+        total_motivo = (motivos == categoria).sum()
+
+        frac_principal = total_motivo / total_seg
+        frac_otras = 1 - frac_principal
+
+        ponderador = (peso_principal * frac_principal) + (peso_otros * frac_otras)
+
+        proporcion = total_seg / total_encuestados
+        PT = potencial_aforo * proporcion
+
+        if activar_factor_correccion and factor_pt_n_sobre_rho is not None:
+            PT *= factor_pt_n_sobre_rho
+
+        resultado = PT * ponderador
+
+        return (
+            resultado, total_seg, total_motivo,
+            frac_principal, frac_otras,
+            ponderador, proporcion
+        )
+
+
+    # ----------------- CALCULAR SEGÚN TIPO -----------------
+
+    # NO LOCALES
+    (
+        PNL, total_nl, motivo_nl,
+        fracP_nl, fracO_nl, ponder_nl, prop_nl
+    ) = _segmento(df_no_local, peso_principal_no_local, peso_otros_no_local)
+
+    # LOCALES
+    (
+        PL, total_l, motivo_l,
+        fracP_l, fracO_l, ponder_l, prop_l
+    ) = _segmento(df_local, peso_principal_local, peso_otros_local)
+
+    # ----------------- RESULTADO UNIFICADO (FORMATO COMPATIBLE) -----------------
 
     if tipo_poblacion == "no_local":
-        df_grupo = df_encuesta_responde[res_col.eq("no")]
-
-    elif tipo_poblacion == "local":
-        df_grupo = df_encuesta_responde[res_col.isin(["sí", "si"])]
-
-    elif tipo_poblacion == "ambos":
-        df_grupo = df_encuesta_responde.copy()
-
-    else:
-        raise ValueError("tipo_poblacion debe ser 'no_local', 'local' o 'ambos'")
-
-    total_grupo = df_grupo.shape[0]
-
-    # Si no hay casos en la muestra → todo en cero
-    if total_grupo == 0:
         return {
-            "Poblacion_estimacion": 0.0,
-            "tipo": tipo_poblacion,
+            "Poblacion_estimacion": float(PNL),
+            "tipo": "no_local",
+
             "total_encuestados": total_encuestados,
-            "potencial_aforo": float(potencial_aforo),
-            "total_grupo": 0,
-            "total_motivo_seleccionado": 0,
-            "proporcion_grupo": 0.0,
-            "ponderador": 0.0,
-            "grupo": df_grupo,
+            "total_grupo": total_nl,
             "categoria_principal": categoria_principal,
-            "peso_principal": peso_principal,
-            "peso_otros": peso_otros,
-            "PT_con_repeticion": 0.0,
-            "PT_ajustado": 0.0,
-            "factor_pt_n_sobre_rho": None,
-            "correccion_activada": False,
+            "total_motivo_seleccionado": motivo_nl,
+
+            "proporcion_grupo": float(prop_nl),
+            "peso_principal": peso_principal_no_local,
+            "peso_otros": peso_otros_no_local,
+
+            "num_categorias_motivo": df_no_local[columna_motivo].nunique(),
+            "factor_correccion_aplicado": float(fracO_nl),
+            "correccion_activada": activar_factor_correccion,
+            "factor_pt_n_sobre_rho": factor_pt_n_sobre_rho,
+
+            "grupo": df_no_local,
         }
 
+    elif tipo_poblacion == "local":
+        return {
+            "Poblacion_estimacion": float(PL),
+            "tipo": "local",
 
-    # 4) Homogeneizar motivo
-    if columna_motivo not in df_encuesta.columns:
-        raise ValueError(f"No se encontró la columna de motivo: '{columna_motivo}'")
+            "total_encuestados": total_encuestados,
+            "total_grupo": total_l,
+            "categoria_principal": categoria_principal,
+            "total_motivo_seleccionado": motivo_l,
 
-    motivos_norm = (
-        df_grupo[columna_motivo]
-        .astype(str)
-        .str.strip()
-        .replace({"": "sin respuesta"})
-        .str.lower()
-    )
+            "proporcion_grupo": float(prop_l),
+            "peso_principal": peso_principal_local,
+            "peso_otros": peso_otros_local,
 
-    # 5) Selección de categoría principal
-    if categoria_principal is None:
-        vc = motivos_norm.value_counts(dropna=False)
-        if "venir a los eventos religiosos" in vc.index:
-            categoria_principal = "venir a los eventos religiosos"
-        elif not vc.empty:
-            categoria_principal = vc.idxmax()
-        else:
-            categoria_principal = "sin respuesta"
+            "num_categorias_motivo": df_local[columna_motivo].nunique(),
+            "factor_correccion_aplicado": float(fracO_l),
+            "correccion_activada": activar_factor_correccion,
+            "factor_pt_n_sobre_rho": factor_pt_n_sobre_rho,
 
-    # 6) Conteos
-    total_motivo_sel = (motivos_norm == categoria_principal).sum()
-    total_otras = total_grupo - total_motivo_sel
+            "grupo": df_local,
+        }
 
-    # 7) Proporción turismo
-    proporcion_grupo = total_grupo / total_encuestados
-    # 8) Ponderador base (NO se corrige nunca con n/ρ)
-    frac_principal = (total_motivo_sel / total_grupo) if total_grupo else 0.0
-    frac_otras = ((total_grupo - total_motivo_sel) / total_grupo) if total_grupo else 0.0
-    num_categorias = motivos_norm.nunique(dropna=False)
+    elif tipo_poblacion == "ambos":
+        TOTAL = PNL + PL
 
-    ponderador = (peso_principal * frac_principal) + (peso_otros * frac_otras)
-    peso_principal_efectivo = peso_principal
+        # Para UI, unimos los grupos
+        df_union = pd.concat([df_no_local, df_local], ignore_index=True)
 
-    # 9) PT con repetición (según metodología)
-    PT_con_repeticion = float(potencial_aforo) * float(proporcion_grupo)
+        return {
+            "Poblacion_estimacion": float(TOTAL),
+            "tipo": "ambos",
 
-    # 10) Aplicar corrección PT̃ = (n/ρ)·PT si corresponde
-    if activar_factor_correccion and (factor_pt_n_sobre_rho is not None):
-        f = max(0.0, min(1.0, float(factor_pt_n_sobre_rho)))
-        PT_ajustado = f * PT_con_repeticion
-        correccion_pt_activada = True
-    else:
-        PT_ajustado = PT_con_repeticion
-        f = None
-        correccion_pt_activada = False
+            "total_encuestados": total_encuestados,
+            "total_grupo": total_nl + total_l,
+            "categoria_principal": categoria_principal,
+            "total_motivo_seleccionado": motivo_nl + motivo_l,
 
-    # 11) PNL final
-    PNL = PT_ajustado * float(ponderador)
+            "proporcion_grupo": float((total_nl + total_l) / total_encuestados),
 
+            # Para UI (requerido)
+            "peso_principal": 0.0,
+            "peso_otros": 0.0,
 
-    return {
-        "Poblacion_estimacion": float(PNL),
-        "tipo": tipo_poblacion,
-        "total_encuestados": int(total_encuestados),
-        "potencial_aforo": float(potencial_aforo),
-        "total_grupo": int(total_grupo),
-        "total_motivo_seleccionado": int(total_motivo_sel),
-        "proporcion_grupo": float(proporcion_grupo),
-        "ponderador": float(ponderador),
-        "grupo": df_grupo,
-        "categoria_principal": categoria_principal,
-        "peso_principal": float(peso_principal),
-        "peso_otros": float(peso_otros),
-        "peso_principal_efectivo": float(peso_principal_efectivo),
-        "num_categorias_motivo": int(num_categorias),
-        "factor_correccion_aplicado": float(frac_otras),  # (total_otras/total_no_reside) — del ponderador
-        "correccion_activada": bool(correccion_pt_activada),
-        # >>> Trazabilidad PT
-        "factor_pt_n_sobre_rho": (float(f) if f is not None else None),
-    }
+            "num_categorias_motivo": df_union[columna_motivo].nunique(),
+            "factor_correccion_aplicado": 0.0,
+            "correccion_activada": activar_factor_correccion,
+            "factor_pt_n_sobre_rho": factor_pt_n_sobre_rho,
 
+            "grupo": df_union,
+
+            # Valores adicionales útiles
+            "PNL": float(PNL),
+            "PL": float(PL),
+        }
 
 
 def evaluar_distribuciones(df, columnas, criterio="auto"):
@@ -381,17 +414,22 @@ def calcular_desglose_por_sectores(
     config_sectores: list | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """
-    Construye una tabla sectorial a partir del EED:
+    Construye una tabla sectorial:
       - 'Efecto directo' = suma de V_EED por Sector_EED.
       - Opcional: 'Efecto indirecto' = PNL * gasto_sector * dias_usado (si activar=True).
-      - 'Total, efecto inducido neto' = inducido(directo) + inducido(indirecto)
-           donde inducido(x) = (x * multiplicador) - x.
+      - 'Total, efecto inducido neto' = (Indirecto * mult_sector) - Indirecto.
+
+    Parámetros:
+      df_eed: DataFrame con columnas col_sector y col_valor
+      pnl: PNL total (float)
+      dias_usado: días a usar para el cálculo (float)
+      col_sector, col_valor: nombres de columnas en df_eed
+      config_sectores: lista de dicts por sector:
+         [{"sector": str, "activar": bool, "gasto": float, "multiplicador": float}, ...]
 
     Retorna:
-      - df_resultado con columnas:
-          ['Sector','Efecto directo','Efecto indirecto',
-           'Total, efecto inducido neto','Efecto económico total','% efecto económico total']
-      - meta: dict con trazabilidad.
+      - df_resultado: DataFrame con columnas ['Sector','Efecto directo','Efecto indirecto','Total, efecto inducido neto']
+      - meta: dict con trazabilidad
     """
     if col_sector not in df_eed.columns or col_valor not in df_eed.columns:
         raise ValueError(f"EED debe tener columnas '{col_sector}' y '{col_valor}'.")
@@ -405,13 +443,12 @@ def calcular_desglose_por_sectores(
         .rename(columns={col_sector: "Sector", col_valor: "Efecto directo"})
     )
 
-    # Config default por sector
+    # Índices y defaults de config
     cfg_map = {}
     for _, row in df_base.iterrows():
         nombre = str(row["Sector"])
         cfg_map[nombre] = {"activar": False, "gasto": 0.0, "multiplicador": 1.0}
 
-    # Sobrescribir con configuración provista por la UI
     if config_sectores:
         for c in config_sectores:
             nombre = str(c.get("sector", ""))
@@ -420,45 +457,34 @@ def calcular_desglose_por_sectores(
                 cfg_map[nombre]["gasto"] = float(c.get("gasto", 0.0))
                 cfg_map[nombre]["multiplicador"] = float(c.get("multiplicador", 1.0))
 
+    # Cálculos
     efectos_indirecto = []
     efectos_inducido = []
     trazas = {}
 
-    # Cálculos por sector
     for _, row in df_base.iterrows():
         nombre = str(row["Sector"])
-        directo = float(row["Efecto directo"]) if pd.notna(row["Efecto directo"]) else 0.0
         cfg = cfg_map[nombre]
-        m = float(cfg["multiplicador"])
-
-        # Indirecto (opcional)
         if cfg["activar"]:
             indirecto = float(pnl) * float(cfg["gasto"]) * float(dias_usado)
+            inducido_neto = (indirecto * cfg["multiplicador"]) - indirecto
         else:
             indirecto = 0.0
-
-        # NUEVA FÓRMULA: inducido neto = inducido(directo) + inducido(indirecto)
-        inc_directo = (directo * m) - directo
-        inc_indirecto = (indirecto * m) - indirecto
-        inducido_neto = inc_directo + inc_indirecto
+            inducido_neto = 0.0
 
         efectos_indirecto.append(indirecto)
         efectos_inducido.append(inducido_neto)
-
         trazas[nombre] = {
             "usar_indirecto": cfg["activar"],
-            "gasto_sector": float(cfg["gasto"]),
-            "multiplicador_sector": m,
-            "inducido_directo": inc_directo,
-            "inducido_indirecto": inc_indirecto,
+            "gasto_sector": cfg["gasto"],
+            "multiplicador_sector": cfg["multiplicador"],
         }
 
-    # Construcción de la tabla
     df_res = df_base.copy()
     df_res["Efecto indirecto"] = efectos_indirecto
     df_res["Total, efecto inducido neto"] = efectos_inducido
 
-    # Efecto económico total y participación
+    # --- NUEVO: Efecto económico total y % participación
     df_res["Efecto económico total"] = (
         df_res["Efecto directo"]
         + df_res["Efecto indirecto"]
@@ -479,9 +505,10 @@ def calcular_desglose_por_sectores(
         "Efecto económico total": [df_res["Efecto económico total"].sum()],
         "% efecto económico total": [1.0],
     })
+
     df_res = pd.concat([df_res, fila_total], ignore_index=True)
 
-    # Orden de columnas
+    # (Opcional) ordenar columnas
     cols = [
         "Sector",
         "Efecto directo",
@@ -499,5 +526,4 @@ def calcular_desglose_por_sectores(
         "total_efecto_economico": float(total_eco),
     }
     return df_res, meta
-
 

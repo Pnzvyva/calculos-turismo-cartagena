@@ -75,10 +75,25 @@ if encuesta_file and aforo_file and eed_file:
             st.info("No se encontraron categorías de motivo entre NO residentes. Se usará selección automática en backend.")
             categoria_principal = None  # backend decide
 
+        st.subheader("Ponderadores para población NO LOCAL (PNL)")
         c1, c2 = st.columns(2)
-        peso_principal = c1.number_input("Peso categoría principal", min_value=0.0, value=1.0, step=0.1, format="%.2f")
-        peso_otros = c2.number_input("Peso otras categorías / sin respuesta", min_value=0.0, value=0.5, step=0.1, format="%.2f")
+        peso_principal_no_local = c1.number_input(
+            "Peso categoría principal (NO LOCALES)", min_value=0.0, value=1.0, step=0.1
+        )
+        peso_otros_no_local = c2.number_input(
+            "Peso otras categorías (NO LOCALES)", min_value=0.0, value=0.5, step=0.1
+        )
 
+        st.subheader("Ponderadores para población LOCAL (PL)")
+        c3, c4 = st.columns(2)
+        peso_principal_local = c3.number_input(
+            "Peso categoría principal (LOCALES)", min_value=0.0, value=1.0, step=0.1
+        )
+        peso_otros_local = c4.number_input(
+            "Peso otras categorías (LOCALES)", min_value=0.0, value=0.5, step=0.1
+        )
+
+        
         # ¿Hay >2 categorías? (solo entre NO residentes)
         hay_mas_de_dos = len(categorias_disponibles) > 2 if categorias_disponibles else False
 
@@ -128,12 +143,18 @@ if encuesta_file and aforo_file and eed_file:
             columna_reside=col_reside,
             columna_motivo=col_motivo,
             categoria_principal=categoria_principal,
-            peso_principal=peso_principal,
-            peso_otros=peso_otros,
+
+            # NUEVOS ARGUMENTOS
+            peso_principal_no_local=peso_principal_no_local,
+            peso_otros_no_local=peso_otros_no_local,
+            peso_principal_local=peso_principal_local,
+            peso_otros_local=peso_otros_local,
+
             activar_factor_correccion=activar_factor_correccion,
             factor_pt_n_sobre_rho=factor_pt_n_sobre_rho,
             tipo_poblacion=tipo_backend
         )
+
 
 
         st.metric(
