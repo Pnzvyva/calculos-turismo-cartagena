@@ -129,6 +129,18 @@ if encuesta_file and aforo_file and eed_file:
             index=0
         )
 
+                # === Número de eventos asistidos (solo para locales) ===
+        n_eventos = None
+        if tipo_poblacion in ["Locales (PL)", "Ambos (PNL + PL)"]:
+            n_eventos = st.number_input(
+                "Número de eventos asistidos (solo para población local o ambos)",
+                min_value=0.0,
+                value=1.0,
+                step=0.5,
+                format="%.2f"
+            )
+
+
         if tipo_poblacion == "No locales (PNL)":
             tipo_backend = "no_local"
         elif tipo_poblacion == "Locales (PL)":
@@ -265,8 +277,11 @@ if encuesta_file and aforo_file and eed_file:
                 col_alim=col_alim,
                 col_trans=col_trans,
                 col_dias=col_dias,
-                extras=extras_cfg,  # <<< NUEVO
+                extras=extras_cfg,
+                n_eventos=n_eventos,              # <<< NUEVO
+                modo_local=(tipo_backend != "no_local")  # <<< NUEVO
             )
+
 
             extras_str = " | ".join([f"{ex['name']}: {ex['mult']:.4f}" for ex in extras_cfg]) if extras_cfg else ""
             st.markdown(
@@ -350,8 +365,11 @@ if encuesta_file and aforo_file and eed_file:
                 dias_usado=dias_sectores,
                 col_sector="Sector_EED",
                 col_valor="V_EED",
-                config_sectores=config_sectores
+                config_sectores=config_sectores,
+                n_eventos=n_eventos,            # <<< NUEVO
+                modo_local=(tipo_backend != "no_local")  # <<< NUEVO
             )
+
 
             def _fmt_num(x):
                 try:

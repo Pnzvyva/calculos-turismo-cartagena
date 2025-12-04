@@ -311,7 +311,9 @@ def calcular_efecto_economico_indirecto(
     col_trans,
     col_dias,
     multiplicadores=None,
-    extras=None,  # <<< NUEVO: lista de dicts [{"name": "...", "col": "...", "mult": float}, ...]
+    extras=None,
+    n_eventos=None,        # <<< nuevo
+    modo_local=False       # <<< nuevo
 ):
     """
     Calcula efectos por rubro usando los valores sugeridos de `stats`.
@@ -335,7 +337,13 @@ def calcular_efecto_economico_indirecto(
     v_aloj0 = 0.0 if pd.isna(v_aloj) else v_aloj
     v_alim0 = 0.0 if pd.isna(v_alim) else v_alim
     v_trans0 = 0.0 if pd.isna(v_trans) else v_trans
-    dias0 = 0.0 if pd.isna(dias) else dias
+    # Si es población local o ambos: usar número de eventos, no días
+    if modo_local and n_eventos is not None:
+        dias0 = float(n_eventos)
+    else:
+        dias = _valor(col_dias)
+        dias0 = 0.0 if pd.isna(dias) else dias
+
 
     # Multiplicadores
     m_general = float(multiplicador)
@@ -410,13 +418,15 @@ def calcular_efecto_economico_indirecto(
     return resultado, desglose
 
 def calcular_desglose_por_sectores(
-    df_eed: pd.DataFrame,
-    pnl: float,
-    dias_usado: float,
-    col_sector: str = "Sector_EED",
-    col_valor: str = "V_EED",
-    config_sectores: list | None = None,
-) -> tuple[pd.DataFrame, dict]:
+    df_eed,
+    pnl,
+    dias_usado,
+    col_sector="Sector_EED",
+    col_valor="V_EED",
+    config_sectores=None,
+    n_eventos=None,          # <<< nuevo
+    modo_local=False         # <<< nuevo
+):
     """
     Construye una tabla sectorial a partir del EED:
       - 'Efecto directo' = suma de V_EED por Sector_EED.
@@ -461,6 +471,12 @@ def calcular_desglose_por_sectores(
     efectos_inducido = []
     trazas = {}
 
+    # === DÍAS PARA LOCALES VS NO LOCALES ===
+    if modo_local and n_eventos is not None:
+        dias_usado_f = float(n_eventos)
+    else:
+        dias_usado_f = float(dias_usado)
+
     # Cálculos por sector
     for _, row in df_base.iterrows():
         nombre = str(row["Sector"])
@@ -470,9 +486,10 @@ def calcular_desglose_por_sectores(
 
         # Indirecto (opcional)
         if cfg["activar"]:
-            indirecto = float(pnl) * float(cfg["gasto"]) * float(dias_usado)
+            indirecto = float(pnl) * float(cfg["gasto"]) * dias_usado_f
         else:
             indirecto = 0.0
+
 
         # NUEVA FÓRMULA: inducido neto = inducido(directo) + inducido(indirecto)
         inc_directo = (directo * m) - directo
